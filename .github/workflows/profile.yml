@@ -1,0 +1,136 @@
+name: Profile
+
+on:
+  workflow_call:
+    inputs:
+      zkvm:
+        description: zkVM to profile the guests on.
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  profile:
+    name: ${{ matrix.stateless-validator }}-${{ inputs.zkvm }}
+    runs-on: ubuntu-latest
+    env:
+      # A pull request profiles a tenth of the corpus, which catches a regression in the profiler
+      # without spending hours per guest.
+      FIXTURE_FILE_ID: ${{ github.event_name == 'pull_request' && '1vG7JU-BV1QTRUU00doX99Ym4dHTYBoB0' || '1KMJJHKmnZrN1CQlFyiL-i69cx46H8Tr0' }}
+      FIXTURE_SET: ${{ github.event_name == 'pull_request' && 'mainnet-25580000-100' || 'mainnet-25580000-1000' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        stateless-validator: [ethrex, nethermind, reth, zesu]
+    steps:
+      - uses: actions/checkout@v7
+
+      # The corpus is 15 GB extracted beside its cached archive, past what a stock runner has free.
+      - name: Free up disk space
+        run: bash .github/scripts/free-up-disk-space.sh
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
+            libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev zstd
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build
+
+      - run: cargo build --release --locked
+
+      # Only the archive is cached, keyed by the file id that identifies the corpus, so a rerun skips
+      # the Drive download. It has to stay on disk for the post-job save, which is why the download
+      # writes a file rather than piping into tar.
+      - name: Cache fixtures
+        id: fixtures
+        uses: actions/cache@v6
+        with:
+          path: fixtures.tar.zst
+          key: fixtures-${{ env.FIXTURE_FILE_ID }}
+
+      - name: Download fixtures
+        if: steps.fixtures.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL -o fixtures.tar.zst \
+            "https://drive.usercontent.google.com/download?id=${FIXTURE_FILE_ID}&export=download&confirm=t"
+
+      # --strip-components=1 drops the archive's top-level directory so the fixtures land directly
+      # under fixtures/<set>.
+      - name: Extract fixtures
+        run: |
+          mkdir -p "fixtures/${FIXTURE_SET}"
+          tar --zstd -xf fixtures.tar.zst -C "fixtures/${FIXTURE_SET}" --strip-components=1
+          find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
+
+      - name: Profile
+        run: |
+          ./target/release/zkevm-prof profile \
+            --zkvm ${{ inputs.zkvm }} \
+            --stateless-validator ${{ matrix.stateless-validator }} \
+            --input "fixtures/${FIXTURE_SET}" \
+            --output "${{ matrix.stateless-validator }}-${{ inputs.zkvm }}.json"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: profile-${{ matrix.stateless-validator }}-${{ inputs.zkvm }}
+          path: ${{ matrix.stateless-validator }}-${{ inputs.zkvm }}.json
+
+  report:
+    needs: profile
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
+            libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: build
+
+      - run: cargo build --release --locked
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: profile-*
+          merge-multiple: true
+          path: profiles
+
+      - name: Report
+        run: |
+          mkdir -p site
+          ./target/release/zkevm-prof report --input profiles/*.json --output site/index.html --format html
+          ./target/release/zkevm-prof report --input profiles/*.json --output report.md --format md
+          cat report.md >> "${GITHUB_STEP_SUMMARY}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: report
+          path: |
+            site/index.html
+            report.md
+
+      # Each zkVM publishes into its own subdirectory, and keep_files leaves the others in place, so
+      # one zkVM's page never replaces another's.
+      - name: Publish to GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: site
+          destination_dir: ${{ inputs.zkvm }}
+          keep_files: true

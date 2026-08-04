@@ -1,0 +1,39 @@
+[package]
+name = "zkevm-prof"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+askama = "0.16"
+clap = { version = "4", features = ["derive"] }
+gag = "1"
+hex = "0.4"
+rayon = "1"
+reqwest = "0.12"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+walkdir = "2"
+
+# zisk
+zisk-common = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
+zisk-core = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
+ziskemu = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
+
+# openvm
+openvm-circuit = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.0", default-features = false, features = ["parallel"] }
+openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+
+# ere
+ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.14.0" }
+
+# ere-guests
+stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.14.0" }
+stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.14.0" }
+
+[target.'cfg(target_arch = "x86_64")'.dependencies]
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = ["aot"] }

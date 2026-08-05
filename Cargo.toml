@@ -22,18 +22,14 @@ zisk-core = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alp
 ziskemu = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
 
 # openvm
-openvm-circuit = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0" }
-openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
-openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", tag = "v2.0.0", default-features = false, features = ["parallel"] }
-openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", default-features = false }
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", features = ["rvr"] }
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", branch = "develop-v2.1.0" }
+openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
 
 # ere
-ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.14.0" }
+ere-catalog = { git = "https://github.com/eth-act/ere", rev = "c8d621df229526fbab3c8012656c38213e079b50" }
 
 # ere-guests
-stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.14.0" }
-stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.14.0" }
-
-[target.'cfg(target_arch = "x86_64")'.dependencies]
-openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.0", features = ["aot"] }
+stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", rev = "c0e111032878843b496715d4b4903c7cd0ad2043" }
+stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", rev = "c0e111032878843b496715d4b4903c7cd0ad2043" }

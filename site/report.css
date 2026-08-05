@@ -53,16 +53,53 @@ main {
   margin: 0 auto;
 }
 
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
 h1 {
-  margin: 0 0 4px;
+  margin: 0;
   font-size: 22px;
   font-weight: 600;
 }
 
-header p {
-  margin: 0;
+.tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.tabs button {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
   color: var(--muted);
+  font-family: inherit;
   font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.tabs button:hover:not([aria-selected='true']) {
+  color: var(--foreground);
+}
+
+.tabs button[aria-selected='true'] {
+  background: var(--elevated);
+  color: var(--foreground);
+}
+
+.tabs button[disabled] {
+  color: var(--faint);
+  cursor: not-allowed;
 }
 
 .card {
@@ -83,6 +120,46 @@ header p {
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.card.hidden {
+  display: none;
+}
+
+/* Run provenance, laid out as label over value so it stays readable when it wraps. */
+#run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 40px;
+  margin: 0;
+}
+
+#run div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#run dt {
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+#run dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+#run a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+#run a:hover {
+  text-decoration: underline;
 }
 
 .chart {
@@ -114,7 +191,9 @@ header p {
 }
 
 #cost th:first-child,
-#cost td:first-child {
+#cost td:first-child,
+#cost th:nth-child(2),
+#cost td:nth-child(2) {
   text-align: left;
 }
 
@@ -145,4 +224,9 @@ header p {
 
 #cost tbody tr:last-child td {
   border-bottom: none;
+}
+
+#error {
+  color: var(--muted);
+  font-size: 13px;
 }

@@ -1,4 +1,4 @@
-name: Profile ZisK
+name: Profile OpenVM
 
 on:
   push:
@@ -16,5 +16,5 @@ jobs:
     permissions:
       contents: write
     with:
-      zkvm: zisk
-      stateless-validators: '["ethrex", "nethermind", "reth", "zesu"]'
+      zkvm: openvm
+      stateless-validators: '["ethrex", "reth"]'

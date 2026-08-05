@@ -23,9 +23,9 @@ ziskemu = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha
 
 # openvm
 openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", features = ["rvr"] }
-openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", default-features = false }
-openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", branch = "develop-v2.1.0", default-features = false, features = ["parallel"] }
-openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview", default-features = false }
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
+openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", branch = "develop-v2.1.0" }
+openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
 
 # ere
 ere-catalog = { git = "https://github.com/eth-act/ere", rev = "c8d621df229526fbab3c8012656c38213e079b50" }

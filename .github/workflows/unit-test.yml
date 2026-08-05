@@ -11,6 +11,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
+  # install step below puts on PATH rather than the distribution clang.
+  RVR_CC: clang-22
+  RVR_LD: lld
 
 jobs:
   unit-test:
@@ -25,6 +29,9 @@ jobs:
             build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
             libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev
 
+      - name: Install the LLVM toolchain
+        run: bash .github/scripts/install-llvm.sh
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -32,6 +39,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: build
+          # The cache is shared with the profile workflow, which needs its budget for the fixture
+          # archives, so only main writes.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo fmt --all --check
 

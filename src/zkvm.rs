@@ -25,18 +25,16 @@ pub type Cost = BTreeMap<String, u64>;
 pub struct Composition {
     /// Kind holding the whole.
     pub total: &'static str,
-    /// Kinds partitioning the total, in stack order.
+    /// Kinds partitioning the total, in stack order. Empty when the zkVM prices an execution as one
+    /// number, which leaves the total nothing to be split into.
     pub components: &'static [&'static str],
 }
 
 /// The composition of the zkVM that produced a profile.
 pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
     match zkvm {
+        zkVMKind::OpenVM => Ok(&openvm::COMPOSITION),
         zkVMKind::Zisk => Ok(&zisk::COMPOSITION),
-        zkVMKind::OpenVM => bail!(
-            "an {zkvm} profile carries per-AIR rows and no total, so there is nothing to compare \
-             until its cost weights are calibrated"
-        ),
         zkVMKind::SP1 => bail!("{zkvm} has no profiling backend"),
     }
 }
@@ -44,7 +42,7 @@ pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
 /// Profiles a single guest over many inputs.
 ///
 /// A backend is constructed once per guest ELF, so whatever it derives from the ELF (a transpiled
-/// ROM, an AOT-compiled instance) is paid for once and shared across the whole corpus.
+/// ROM, a compiled shared library) is paid for once and shared across the whole corpus.
 pub trait Profiler: Sync {
     fn profile(&self, stateless_input: &[u8]) -> Result<Cost>;
 }

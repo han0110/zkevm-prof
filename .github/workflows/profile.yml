@@ -7,9 +7,17 @@ on:
         description: zkVM to profile the guests on.
         required: true
         type: string
+      stateless-validators:
+        description: JSON array of the guests the zkVM has a published ELF for.
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
+  # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
+  # install step below puts on PATH rather than the distribution clang.
+  RVR_CC: clang-22
+  RVR_LD: lld
 
 jobs:
   profile:
@@ -23,7 +31,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stateless-validator: [ethrex, nethermind, reth, zesu]
+        stateless-validator: ${{ fromJSON(inputs.stateless-validators) }}
     steps:
       - uses: actions/checkout@v7
 
@@ -38,10 +46,16 @@ jobs:
             build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
             libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev zstd
 
+      - name: Install the LLVM toolchain
+        run: bash .github/scripts/install-llvm.sh
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: build
+          # A branch saves under its own cache scope, and the OpenVM build tree is large enough that
+          # a copy per branch would evict the fixture archives, so only main writes.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo build --release --locked
 
@@ -70,6 +84,11 @@ jobs:
           find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
 
       - name: Profile
+        # The guest is downloaded from an ere-guests build artifact, which the GitHub API serves only
+        # to an authenticated caller. ere-guests is public, so the job's own token is enough and no
+        # cross-repository secret is needed.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./target/release/zkevm-prof profile \
             --zkvm ${{ inputs.zkvm }} \
@@ -87,6 +106,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # Every caller publishes into the same Pages branch, and a caller's own concurrency group does
+    # not cover the others, so publication is serialised here instead.
+    concurrency:
+      group: publish-pages
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v7
 
@@ -97,10 +121,14 @@ jobs:
             build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
             libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev
 
+      - name: Install the LLVM toolchain
+        run: bash .github/scripts/install-llvm.sh
+
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: build
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - run: cargo build --release --locked
 
@@ -127,7 +155,7 @@ jobs:
       # Each zkVM publishes into its own subdirectory, and keep_files leaves the others in place, so
       # one zkVM's page never replaces another's.
       - name: Publish to GitHub Pages
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}

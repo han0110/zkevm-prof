@@ -1,11 +1,12 @@
 //! The `profile` command.
 //!
-//! Resolves the guest ELF, then runs it over a fixture corpus on the chosen zkVM. Guests published
-//! by ere-guests are fetched from its GitHub release; Nethermind is not part of that catalog, so its
-//! guest is published from a Nethermind fork and fetched from there instead.
+//! Resolves the guest ELF, then runs it over a fixture corpus on the chosen zkVM. Guests built by
+//! ere-guests are fetched from the artifacts of one commit's build; Nethermind is not part of that
+//! catalog, so its guest is published from a Nethermind fork and fetched from there instead.
 
 use std::{
-    fs::File,
+    env,
+    fs::{self, File},
     io::BufWriter,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
@@ -29,7 +30,17 @@ use crate::{
     zkvm::{Cost, Entry, Meta, Profile, Profiler, profiler},
 };
 
-const ERE_GUESTS_TAG: &str = "v0.14.0";
+/// ere-guests commit the profiled guests are built by.
+///
+/// Guests come from the build artifacts of this commit rather than from a release, since no release
+/// yet carries the OpenVM `v2.1.0-preview` guests this crate is pinned against.
+const ERE_GUESTS_COMMIT: &str = "c0e111032878843b496715d4b4903c7cd0ad2043";
+
+/// Environment variable holding the token the artifact download authenticates with.
+///
+/// The GitHub artifact API rejects anonymous reads, so unlike a release asset an artifact cannot be
+/// fetched without a token.
+const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
 /// Release the Nethermind guest is fetched from.
 ///
@@ -87,11 +98,16 @@ pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Res
             ))
             .await
         }
-        _ => Ok(Downloader::from_tag(ERE_GUESTS_TAG)
-            .await?
-            .download(stateless_validator.try_into()?, zkvm)
-            .await?
-            .elf),
+        _ => {
+            let github_token = env::var(GITHUB_TOKEN).with_context(|| {
+                format!("{GITHUB_TOKEN} must hold a token that can read ere-guests build artifacts")
+            })?;
+            Ok(Downloader::from_commit(ERE_GUESTS_COMMIT, &github_token)
+                .await?
+                .download(stateless_validator.try_into()?, zkvm)
+                .await?
+                .elf)
+        }
     }
 }
 
@@ -154,19 +170,31 @@ pub struct ProfileCmd {
     /// Path to write the profile JSON to.
     #[arg(long)]
     output: PathBuf,
+
+    /// Guest ELF to profile, in place of the downloaded one.
+    ///
+    /// A guest built against an SDK other than the one this crate links does not load, so profiling
+    /// one that no ere-guests build carries means handing the ELF over directly.
+    #[arg(long)]
+    elf: Option<PathBuf>,
 }
 
 impl ProfileCmd {
     pub async fn run(self) -> Result<()> {
-        let elf = elf(self.stateless_validator, self.zkvm)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to resolve the {} guest for {}",
-                    self.stateless_validator.as_str(),
-                    self.zkvm
-                )
-            })?;
+        let elf = match &self.elf {
+            Some(path) => {
+                fs::read(path).with_context(|| format!("failed to read {}", path.display()))?
+            }
+            None => elf(self.stateless_validator, self.zkvm)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed to resolve the {} guest for {}",
+                        self.stateless_validator.as_str(),
+                        self.zkvm
+                    )
+                })?,
+        };
         let profiler = profiler(self.zkvm, &elf)?;
 
         let paths = fixture::find(&self.input)?;

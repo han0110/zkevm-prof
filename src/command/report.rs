@@ -160,8 +160,9 @@ fn build_series(
             .map(|kind| value(kind))
             .collect::<Result<Vec<f64>>>()?;
         let summed: f64 = components.iter().sum();
-        // A stacked bar that does not reach its own total would misstate every share it draws.
-        if (summed - total).abs() > total * 1e-9 {
+        // A stacked bar that does not reach its own total would misstate every share it draws. A
+        // total priced as one number has no components, and so nothing to check.
+        if !components.is_empty() && (summed - total).abs() > total * 1e-9 {
             bail!(
                 "{label}/{name}: {:?} sum to {summed}, not the {} of {total}",
                 composition.components,

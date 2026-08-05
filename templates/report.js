@@ -339,11 +339,11 @@ function isolatingLegend(chart, names, onChange) {
   });
 }
 
-const compositionChart = mount(
-  'composition',
-  composition,
-  Math.max(180, DATA.guests.length * 46 + 72)
-);
+/* A zkVM that prices an execution as one number leaves the total nothing to be split into, and the
+   page drops the composition section along with it. */
+const compositionChart = DATA.kinds.length
+  ? mount('composition', composition, Math.max(180, DATA.guests.length * 46 + 72))
+  : null;
 const gasChart = mount('gas', gas, 420);
 
 /* Merges into the existing series, so the bars are not rebuilt on every toggle. */
@@ -356,22 +356,24 @@ function refreshComposition() {
   });
 }
 
-isolatingLegend(compositionChart, DATA.kinds, (selected) => {
-  enabledKinds = new Set(DATA.kinds.filter((kind) => selected[kind]));
-  refreshComposition();
-});
+if (compositionChart) {
+  isolatingLegend(compositionChart, DATA.kinds, (selected) => {
+    enabledKinds = new Set(DATA.kinds.filter((kind) => selected[kind]));
+    refreshComposition();
+  });
+
+  /* Only fires on a bar, never on empty grid space. */
+  compositionChart.on('click', () => {
+    showCost = !showCost;
+    refreshComposition();
+  });
+}
 
 isolatingLegend(
   gasChart,
   DATA.lines.map((line) => line.label),
   () => {}
 );
-
-/* Only fires on a bar, never on empty grid space. */
-compositionChart.on('click', () => {
-  showCost = !showCost;
-  refreshComposition();
-});
 
 function sortable(table) {
   const headers = Array.prototype.slice.call(table.querySelectorAll('th[data-sort]'));
@@ -401,5 +403,5 @@ function sortable(table) {
 
 sortable(document.getElementById('cost'));
 
-const charts = [compositionChart, gasChart];
+const charts = [compositionChart, gasChart].filter(Boolean);
 window.addEventListener('resize', () => charts.forEach((chart) => chart.resize()));

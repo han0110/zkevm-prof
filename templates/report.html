@@ -33,11 +33,13 @@
   </table>
 </section>
 
+{%- if !view.kinds.is_empty() %}
 <section class="card">
   <h2>Cost composition</h2>
   <p>Total profiled cost per guest, split by the kinds that sum to it. Click a bar to switch between share and cost.</p>
   <div id="composition" class="chart"></div>
 </section>
+{%- endif %}
 
 <section class="card">
   <h2>Cost against Gas Usage</h2>

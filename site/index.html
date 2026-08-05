@@ -1,4 +1,3 @@
-{#- Single page cost report. Figures and series data come from src/command/report.rs. -#}
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8,48 +7,44 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="report.css">
 <script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js"></script>
-<style>
-{%- include "report.css" -%}
-</style>
 </head>
 <body>
 <main>
 <header>
   <h1>zkEVM guest cost profile</h1>
-  <p>Profiles of {{ view.guests.len() }} guests over {{ view.blocks }} blocks.</p>
+  <nav class="tabs" id="tabs" aria-label="zkVM"></nav>
 </header>
 
-<section class="card">
+<section class="card" id="run-card">
+  <h2>Run</h2>
+  <dl id="run"></dl>
+</section>
+
+<section class="card" id="cost-card">
   <h2>Cost</h2>
   <p>Click Guest or Relative to sort.</p>
   <table id="cost">
-    <thead><tr><th data-sort="text">Guest</th><th>Total cost</th><th>Mean per block</th><th>Cost per gas</th><th data-sort="number">Relative</th></tr></thead>
-    <tbody>
-    {%- for guest in view.guests %}
-      <tr><td>{{ guest.label }}</td><td>{{ guest.total }}</td><td>{{ guest.mean }}</td><td>{{ guest.per_gas }}</td><td>{{ guest.relative }}</td></tr>
-    {%- endfor %}
-    </tbody>
+    <thead><tr><th data-sort="text">Guest</th><th>Version</th><th>Total cost</th><th>Mean per block</th><th>Cost per gas</th><th data-sort="number">Relative</th></tr></thead>
+    <tbody></tbody>
   </table>
 </section>
 
-{%- if !view.kinds.is_empty() %}
-<section class="card">
+<section class="card hidden" id="composition-card">
   <h2>Cost composition</h2>
   <p>Total profiled cost per guest, split by the kinds that sum to it. Click a bar to switch between share and cost.</p>
   <div id="composition" class="chart"></div>
 </section>
-{%- endif %}
 
-<section class="card">
+<section class="card" id="gas-card">
   <h2>Cost against Gas Usage</h2>
   <p>Every profiled block against the gas it used. Click a legend entry to isolate it, click again to reset, Cmd or Ctrl click to toggle one.</p>
   <div id="gas" class="chart"></div>
 </section>
+
+<p id="error" hidden></p>
 </main>
-<script type="application/json" id="report-data">{{ view.chart|safe }}</script>
-<script>
-{%- include "report.js" -%}
-</script>
+<script src="report.js"></script>
 </body>
 </html>

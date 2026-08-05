@@ -66,6 +66,12 @@ pub struct Profile {
 #[derive(Deserialize, Serialize)]
 pub struct Meta {
     pub zkvm: zkVMKind,
+    /// zkVM SDK the guest was built against, as the ere catalog names it.
+    pub zkvm_version: String,
+    /// Guest the profile is of.
+    pub guest: String,
+    /// Version of that guest, as the ere-guests catalog records it.
+    pub guest_version: String,
 }
 
 /// One profiled block.

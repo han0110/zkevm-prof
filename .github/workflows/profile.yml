@@ -138,10 +138,12 @@ jobs:
           merge-multiple: true
           path: profiles
 
+      # The page is static and loads one JSON per zkVM, so publishing copies the site next to a
+      # report named after the zkVM this run profiled.
       - name: Report
         run: |
-          mkdir -p site
-          ./target/release/zkevm-prof report --input profiles/*.json --output site/index.html --format html
+          cp -r site publish
+          ./target/release/zkevm-prof report --input profiles/*.json --output "publish/${{ inputs.zkvm }}.json"
           ./target/release/zkevm-prof report --input profiles/*.json --output report.md --format md
           cat report.md >> "${GITHUB_STEP_SUMMARY}"
 
@@ -149,16 +151,15 @@ jobs:
         with:
           name: report
           path: |
-            site/index.html
+            publish/${{ inputs.zkvm }}.json
             report.md
 
-      # Each zkVM publishes into its own subdirectory, and keep_files leaves the others in place, so
-      # one zkVM's page never replaces another's.
+      # Every zkVM publishes the same static site to the root, and keep_files leaves the other
+      # zkVMs' JSON in place, so a run only ever replaces its own tab's data.
       - name: Publish to GitHub Pages
         if: github.ref == 'refs/heads/main'
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: site
-          destination_dir: ${{ inputs.zkvm }}
+          publish_dir: publish
           keep_files: true

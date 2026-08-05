@@ -42,13 +42,12 @@ const ERE_GUESTS_COMMIT: &str = "c0e111032878843b496715d4b4903c7cd0ad2043";
 /// fetched without a token.
 const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
-/// Release the Nethermind guest is fetched from.
+/// Release the Nethermind guest is fetched from, which is also the version it is known by.
 ///
 /// Nethermind has no ere-guests release, so its guest is published from a fork, built by the same
 /// `make build` recipe the Nethermind release workflow runs. Assets follow the ere-guests naming so
 /// a fork-released guest and a catalog one resolve alike.
-const NETHERMIND_RELEASE: &str =
-    "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7";
+const NETHERMIND_TAG: &str = "glamsterdam-devnet-7";
 
 /// Stateless validator whose guest is profiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -67,6 +66,17 @@ impl StatelessValidator {
             Self::Nethermind => "nethermind",
             Self::Reth => "reth",
             Self::Zesu => "zesu",
+        }
+    }
+
+    /// Version of the guest, which the report shows beside its cost.
+    ///
+    /// Nethermind is outside the ere-guests catalog, so it is versioned by the fork release it is
+    /// published under rather than by a catalog entry.
+    pub fn version(self) -> &'static str {
+        match StatelessValidatorKind::try_from(self) {
+            Ok(kind) => kind.version(),
+            Err(_) => NETHERMIND_TAG,
         }
     }
 }
@@ -92,7 +102,8 @@ pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Res
     match stateless_validator {
         StatelessValidator::Nethermind => {
             download(&format!(
-                "{NETHERMIND_RELEASE}/stateless-validator-{}-{zkvm}-{}.elf",
+                "https://github.com/han0110/nethermind/releases/download/{NETHERMIND_TAG}\
+                 /stateless-validator-{}-{zkvm}-{}.elf",
                 stateless_validator.as_str(),
                 zkvm.sdk_version()
             ))
@@ -258,7 +269,12 @@ impl ProfileCmd {
 
         let profile = Profile {
             profile: entries.into_iter().collect(),
-            meta: Meta { zkvm: self.zkvm },
+            meta: Meta {
+                zkvm: self.zkvm,
+                zkvm_version: self.zkvm.sdk_version().to_owned(),
+                guest: self.stateless_validator.as_str().to_owned(),
+                guest_version: self.stateless_validator.version().to_owned(),
+            },
         };
         let file = File::create(&self.output)
             .with_context(|| format!("failed to create {}", self.output.display()))?;

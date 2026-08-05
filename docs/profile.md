@@ -1,13 +1,12 @@
 # zkEVM guest cost profiling
 
 Measures what a zkVM charges to prove a stateless validator executing a block, and turns a corpus of
-those measurements into a comparison across guests.
+those measurements into a comparison across guests. The cost is the zkVM's own price for the
+execution rather than wall clock time, so it reproduces on any machine and compares across guests
+that ran the same blocks.
 
-The cost is the zkVM's own price for the execution rather than wall clock time, so it is reproducible
-on any machine and comparable between guests that ran the same blocks.
-
-Work runs in two steps. `profile` measures one guest over a fixture corpus and writes JSON, and
-`report` aggregates several of those JSON files into one document.
+`profile` measures one guest over a fixture corpus and writes JSON. `report` aggregates several of
+those files into one document.
 
 ```sh
 cargo build --release
@@ -15,8 +14,6 @@ cargo build --release
 ```
 
 ## profile
-
-Runs one guest over a corpus of EEST fixtures and records what each block cost.
 
 ```sh
 zkevm-prof profile \
@@ -30,30 +27,22 @@ zkevm-prof profile \
 | --- | --- | --- |
 | `--zkvm` | `openvm`, `zisk` | zkVM the guest is profiled on. |
 | `--stateless-validator` | `ethrex`, `nethermind`, `reth`, `zesu` | Guest to profile. |
-| `--input` | path | Directory of EEST fixtures. |
+| `--input` | path | Directory of EEST fixtures, walked recursively for `.json`. |
 | `--output` | path | Where the profile JSON is written. |
 | `--elf` | path | Guest ELF to profile, in place of the downloaded one. |
 
-The input directory is walked recursively for `.json` files. Only the last block of each fixture is
-profiled, since that is the block an EEST blockchain test is written to exercise and the ones before
-it only build the state it runs against. A fixture file holding several tests contributes one entry
-per test.
+Only the last block of each fixture is profiled, since that is the block an EEST blockchain test is
+written to exercise and the ones before it only build the state it runs against. A fixture holding
+several tests contributes one entry per test.
 
-The output holds the per-test profile alongside the zkVM that produced it, which is how the report
-knows what a cost map's kinds mean.
+The output pairs the per-test costs with the zkVM that produced them, which is how the report knows
+what a cost map's kinds mean.
 
 ```json
 {
   "profile": {
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
-      "cost": {
-        "base": 293601280,
-        "main": 25355756224,
-        "memory": 3326600265,
-        "opcodes": 6117328484,
-        "precompiles": 7802641084,
-        "total": 42895927337
-      },
+      "cost": { "base": 293601280, "main": 25355756224, "total": 42895927337 },
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
   },
@@ -61,21 +50,18 @@ knows what a cost map's kinds mean.
 }
 ```
 
-Blocks are profiled in parallel over rayon's global pool, which by default fills every core. Cap it
-with `RAYON_NUM_THREADS` on a machine with many cores and little memory, since a profiled execution
-holds the whole guest memory.
+Blocks are profiled in parallel over rayon's global pool, which by default fills every core. A
+profiled execution holds the whole guest memory, so cap the pool on a machine with many cores and
+little memory.
 
 ```sh
 RAYON_NUM_THREADS=8 zkevm-prof profile --zkvm zisk ...
 ```
 
-Progress and failures go to stderr, so stdout stays free for the backends themselves. A block that
-fails to profile is reported and skipped rather than discarding the corpus, and the run ends with a
-count of what was skipped. The command fails only when every block failed.
+Progress and failures go to stderr, leaving stdout to the backends. A failed block is reported and
+skipped, the run prints how many were skipped, and the command fails only when every block failed.
 
 ## report
-
-Aggregates profiles into one document.
 
 ```sh
 zkevm-prof report --input ethrex-zisk.json nethermind-zisk.json --output index.html
@@ -86,47 +72,43 @@ zkevm-prof report --input ethrex-zisk.json nethermind-zisk.json --output report.
 | --- | --- | --- |
 | `--input` | one or more paths | Profile JSON files, one per guest. |
 | `--output` | path | Where the report is written. |
-| `--format` | `html`, `md` | Shape of the report, `html` by default. |
+| `--format` | `json`, `md` | Shape of the report, `json` by default. |
 
 Each input contributes one series labelled by its file stem, so `nethermind-zisk.json` becomes the
 series `nethermind-zisk`. Series are compared over the tests they all profiled, so a guest that
-failed on some blocks does not appear cheaper for having skipped them.
+failed on some blocks does not appear cheaper for having skipped them. Every input has to come from
+the same zkVM, since costs from different zkVMs are in different units.
 
-`html` renders a single page with a totals table, a cost against gas chart and, for a zkVM that prices
-in kinds, a stacked composition bar. `md` renders the same figures as tables, for pasting into a pull
-request or an issue. Both documents live in [`templates/`](../templates) and are checked at build time
-by askama, so changing what a report says is a template edit. Rust computes geometry and formats
-numbers; the templates hold no logic beyond iteration.
+`json` carries the series in the units they were profiled in, along with the zkVM version, the block
+count and the time and workflow run that produced them. `md` renders the same figures as tables, from
+[`templates/report.md`](../templates/report.md), for pasting into a pull request.
 
-Every input has to come from the same zkVM, since costs from different zkVMs are in different units.
-Mixing them is an error rather than a chart of incomparable numbers.
+The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
+`openvm.json` fills the OpenVM tab and `zisk.json` the ZisK tab, and a tab always shows one run's
+batch rather than a mix of two. Numbers are formatted in the page rather than in the report, so the
+JSON stays the raw measurement. Opening a tab records it in the URL fragment, which makes a tab
+linkable.
 
 ## Guests
 
 Ethrex, Reth and Zesu guests are downloaded from the build artifacts of the [ere-guests][ere-guests]
-commit the CLI is pinned to. The stateless input schema is versioned with the guests, so a corpus and
-a guest have to come from the same commit or the guest rejects the input. A build names its artifacts
-after the zkVM SDK it built them with, and that SDK has to be the one this crate links, since OpenVM
-moved its guest target from 32-bit to 64-bit RISC-V between `v2.0.0` and `v2.1.0-preview`.
+commit pinned in `ERE_GUESTS_COMMIT`. The stateless input schema is versioned with the guests, so a
+corpus and a guest have to come from the same commit or the guest rejects the input. Artifacts are
+named after the zkVM SDK that built them, and that SDK has to be the one this crate links. Moving to
+another commit means bumping `ERE_GUESTS_COMMIT` and the `ere-catalog` pin together, since the
+catalog is what names the SDK version.
+
+The GitHub API serves build artifacts only to an authenticated caller, so `GITHUB_TOKEN` has to hold
+a token. ere-guests is public, so any token is enough. Artifacts expire on the repository's retention
+window, after which the pin has to move. Passing `--elf` bypasses the download entirely.
 
 Not every guest is built for every zkVM. ere-guests compiles Ethrex and Reth for each zkVM it
 supports, while Zesu is republished from a Consensys release and only for ZisK, so no Zesu guest
 exists on OpenVM. A caller of the profile workflow lists only the guests its zkVM has.
 
-Artifacts are used rather than release assets because no ere-guests release yet carries
-`v2.1.0-preview` guests. Moving to another commit means bumping `ERE_GUESTS_COMMIT` and the
-`ere-catalog` pin together, since the catalog is what names the SDK version in an artifact. Unlike a
-release asset, the GitHub API serves an artifact only to an authenticated caller, so `GITHUB_TOKEN`
-has to hold a token; ere-guests is public, so any token is enough. Artifacts also expire on the
-repository's retention window, after which the pin has to move to a newer commit or a release.
-
-Handing over a locally built guest with `--elf` bypasses the download.
-
-Nethermind has no ere-guests release, so its guest is published from a fork under the
-`glamsterdam-devnet-7` tag and fetched from there. Assets follow the ere-guests naming, so a
-fork-released guest and a catalog one resolve alike.
-
-Rebuilding it runs the same recipe the Nethermind release workflow does, from a Nethermind checkout.
+Nethermind is outside the ere-guests catalog. Its guest is published from a fork under the
+`glamsterdam-devnet-7` tag, following the ere-guests asset naming so it resolves alike. Rebuilding it
+runs the recipe the Nethermind release workflow uses, from a Nethermind checkout.
 
 ```sh
 cd src/Nethermind/Nethermind.Stateless.ZiskGuest
@@ -147,19 +129,16 @@ ZisK prices an execution as a weighted sum over the work the prover has to do, w
 accumulates as it runs. The emulator is driven in process rather than through the `ziskemu` binary,
 and the resulting distribution matches `ziskemu -X` exactly.
 
-OpenVM prices an execution from trace geometry instead, through the metered cost mode its own
-`cargo openvm run --mode meter` uses. Every instruction is charged the rows it adds times the width
-of the AIR that proves it, so the total is the trace cells the app VM has to commit to. The mode
-carries no memory model and no segmentation, which leaves the number independent of the machine and
-of the prover backend. A profile records that total under `cost`.
+OpenVM prices an execution from trace geometry instead, through the same metered cost mode as
+`cargo openvm run --mode meter`. Every instruction is charged the rows it adds times the width of the
+AIR that proves it, so the total is the trace cells the app VM commits to. A profile records that
+total under `cost`. The number depends on the app VM configuration, which is kept equal to the one
+ere proves these guests under.
 
-Running a guest goes through rvr, which translates the program to C and builds it into a shared
-library once per guest ELF. That build needs LLVM clang 19 or newer and a matching lld, which
-[`install-llvm.sh`](../.github/scripts/install-llvm.sh) installs on a runner. That build dominates a
-run and does not grow with the corpus. Building the Reth guest cost 1220 CPU-seconds and peaked at
-3.8 GB of memory, most of it in the toolchain rather than in the profiler, while metering a mainnet
-block afterwards cost under a second. Only part of the build parallelises, so those 1220
-CPU-seconds took 65 s of wall clock on 32 cores.
+Running an OpenVM guest goes through rvr, which translates the program to C and builds it into a
+shared library once per ELF. That build needs LLVM clang 19 or newer and a matching lld, installed by
+[`install-llvm.sh`](../.github/scripts/install-llvm.sh). It dominates a run and does not grow with
+the corpus, so metering more blocks is nearly free once it is done.
 
 Adding a zkVM means implementing `Profiler` in a module under `src/zkvm` and declaring how its cost
 map decomposes. The cost is an open map of whatever kinds that zkVM charges for, so the fixture
@@ -172,39 +151,33 @@ pub const COMPOSITION: Composition = Composition {
 };
 ```
 
-The report reads `meta.zkvm` and picks that backend's composition, so a profile never has to repeat
-the shape of its own cost map. A zkVM that prices an execution as one number leaves `components`
-empty, and the report drops its composition section rather than drawing a bar of one segment.
+The report reads `meta.zkvm` and picks that backend's composition, so a profile never repeats the
+shape of its own cost map. A zkVM that prices an execution as one number leaves `components` empty,
+and the report drops its composition section rather than drawing a bar of one segment.
 
 ## Continuous integration
 
 [`profile.yml`](../.github/workflows/profile.yml) is a reusable workflow that profiles a matrix of
 guests over a mainnet corpus, aggregates the results and publishes the page to GitHub Pages from
-`main`. It takes the zkVM and the guests it has a built ELF for as inputs, so adding a backend to CI
-means adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml) and
-[`profile-openvm.yml`](../.github/workflows/profile-openvm.yml) are those callers. The OpenVM one
-runs on demand rather than on a push, since building a guest through rvr dominates the run.
+`main`. It takes the zkVM and the guests it has a built ELF for as inputs, so adding a backend means
+adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml) and
+[`profile-openvm.yml`](../.github/workflows/profile-openvm.yml) are those callers. Every job that
+builds this crate first installs the LLVM toolchain rvr needs, since Ubuntu ships a clang older than
+rvr accepts and no lld at all.
 
-A pull request profiles 100 blocks and every other run profiles 1000. The full corpus extracts to
-15 GB, which is more than a GitHub-hosted runner has free, so the job first runs
+A pull request profiles 100 blocks and every other run profiles 1000. The corpus extracts to 15 GB,
+more than a GitHub-hosted runner has free, so the job first runs
 [`free-up-disk-space.sh`](../.github/scripts/free-up-disk-space.sh) to drop the preinstalled Android,
-Haskell, .NET and CodeQL toolchains.
-
-Only the compressed archive is cached, keyed by its Drive file id, so a rerun extracts it instead of
-downloading it again. The two corpora take about 6.3 GB of the 10 GB a repository gets, so adding a
-third would start evicting the others. The cargo cache competes for the same budget, and the OpenVM
-dependency makes it large enough to matter, so only `main` writes it and a branch restores what
-`main` last saved.
-
-Every job that builds this crate first installs the LLVM toolchain OpenVM's rvr backend needs, since
-Ubuntu ships a clang older than rvr accepts and no lld at all.
+Haskell, .NET and CodeQL toolchains. Only the compressed archive is cached, keyed by its Drive file
+id, so a rerun extracts it instead of downloading it again. The corpora and the cargo cache compete
+for the 10 GB a repository gets, so only `main` writes and a branch restores what `main` last saved.
 
 [`unit-test.yml`](../.github/workflows/unit-test.yml) runs `cargo fmt`, `clippy` and the tests on
-every push and pull request. It shares one cargo cache with the profile workflow, since both build
-this crate in release.
+every push and pull request, sharing the cargo cache with the profile workflow.
 
-Each zkVM publishes into its own subdirectory of the Pages branch, so the ZisK page lands at
-`/zisk/` and a second zkVM never replaces it. Callers share that branch, so the job holding the
-publish step takes one global concurrency slot and their pushes cannot race.
+Every caller publishes the same static page to the root of the Pages branch alongside its own
+`<zkvm>.json`, and keep_files leaves the other zkVMs' reports in place, so a run only ever replaces
+its own tab. Callers share that branch, so the job holding the publish step takes one global
+concurrency slot and their pushes cannot race.
 
 [ere-guests]: https://github.com/eth-act/ere-guests

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zkEVM guest cost profile</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="report.css">
+<script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js"></script>
+</head>
+<body>
+<main>
+<header>
+  <h1>zkEVM guest cost profile</h1>
+  <nav class="tabs" id="tabs" aria-label="zkVM"></nav>
+</header>
+
+<section class="card" id="run-card">
+  <h2>Run</h2>
+  <dl id="run"></dl>
+</section>
+
+<section class="card" id="cost-card">
+  <h2>Cost</h2>
+  <p>Empirically cost gaps overstate proving time gaps, so take the relative column as a reference rather than a proving time prediction.</p>
+  <table id="cost">
+    <thead><tr><th data-sort="text">Guest</th><th>Version</th><th>Total cost</th><th>Mean per block</th><th>Cost per gas</th><th data-sort="number">Relative</th></tr></thead>
+    <tbody></tbody>
+  </table>
+</section>
+
+<section class="card hidden" id="composition-card">
+  <h2>Cost composition</h2>
+  <p>Total profiled cost per guest, split by the kinds that sum to it.</p>
+  <div id="composition" class="chart"></div>
+</section>
+
+<section class="card" id="gas-card">
+  <h2>Cost against Gas Usage</h2>
+  <p>Every profiled block against the gas it used.</p>
+  <div id="gas" class="chart"></div>
+</section>
+
+<p id="error" hidden></p>
+</main>
+<script src="report.js"></script>
+</body>
+</html>

@@ -1,0 +1,232 @@
+/* Theme tokens. report.js reads these back, so the palette is defined only here. */
+
+:root {
+  color-scheme: dark;
+
+  --warm-base: #1a1410;
+  --warm-surface: #241c15;
+  --warm-elevated: #30251b;
+  --warm-border: #3f3327;
+  --text-primary: #f2e8da;
+  --text-secondary: #bba890;
+  --text-muted: #8a7a64;
+
+  --cat-1: #e8743b;
+  --cat-2: #ebb13e;
+  --cat-3: #c8434c;
+  --cat-4: #b0673a;
+  --cat-5: #9da94f;
+  --cat-6: #4fa088;
+  --cat-7: #9c5e8e;
+  --cat-8: #d9c18a;
+
+  --background: var(--warm-base);
+  --surface: var(--warm-surface);
+  --elevated: var(--warm-elevated);
+  --foreground: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-muted);
+  --border: var(--warm-border);
+  --primary: var(--cat-1);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+body {
+  margin: 0;
+  padding: 32px 24px 48px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 1080px;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1 {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 600;
+}
+
+.tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.tabs button {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 120ms, color 120ms;
+}
+
+.tabs button:hover:not([aria-selected='true']) {
+  color: var(--foreground);
+}
+
+.tabs button[aria-selected='true'] {
+  background: var(--elevated);
+  color: var(--foreground);
+}
+
+.tabs button[disabled] {
+  color: var(--faint);
+  cursor: not-allowed;
+}
+
+.card {
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.3);
+}
+
+.card h2 {
+  margin: 0 0 2px;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.card p {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.card.hidden {
+  display: none;
+}
+
+/* Run provenance, laid out as label over value so it stays readable when it wraps. */
+#run {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 40px;
+  margin: 0;
+}
+
+#run div {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+#run dt {
+  color: var(--faint);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+#run dd {
+  margin: 0;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+#run a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+#run a:hover {
+  text-decoration: underline;
+}
+
+.chart {
+  width: 100%;
+}
+
+#cost {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+#cost th {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--faint);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  text-align: right;
+  text-transform: uppercase;
+}
+
+#cost td {
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+#cost th:first-child,
+#cost td:first-child,
+#cost th:nth-child(2),
+#cost td:nth-child(2) {
+  text-align: left;
+}
+
+#cost th[data-sort] {
+  cursor: pointer;
+  user-select: none;
+}
+
+#cost th[data-sort]:hover {
+  color: var(--muted);
+}
+
+#cost th[aria-sort]::after {
+  content: ' \25B2';
+}
+
+#cost th[aria-sort='descending']::after {
+  content: ' \25BC';
+}
+
+#cost tbody tr {
+  transition: background-color 120ms;
+}
+
+#cost tbody tr:hover {
+  background: rgb(48 37 27 / 0.4);
+}
+
+#cost tbody tr:last-child td {
+  border-bottom: none;
+}
+
+#error {
+  color: var(--muted);
+  font-size: 13px;
+}

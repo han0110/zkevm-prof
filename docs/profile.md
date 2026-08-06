@@ -91,16 +91,19 @@ linkable.
 
 ## Guests
 
-Ethrex, Reth and Zesu guests are downloaded from the build artifacts of the [ere-guests][ere-guests]
-commit pinned in `ERE_GUESTS_COMMIT`. The stateless input schema is versioned with the guests, so a
-corpus and a guest have to come from the same commit or the guest rejects the input. Artifacts are
-named after the zkVM SDK that built them, and that SDK has to be the one this crate links. Moving to
-another commit means bumping `ERE_GUESTS_COMMIT` and the `ere-catalog` pin together, since the
-catalog is what names the SDK version.
+Ethrex, Reth and Zesu guests are downloaded from [ere-guests][ere-guests] at the version
+`stateless-validator-catalog` is pinned to in `Cargo.toml`, which the build script reads so the
+download and the linked catalog cannot drift apart. A tag pin resolves to that release's assets, and
+a branch or revision pin to the build artifacts of the commit it locks to. The stateless input
+schema is versioned with the guests, so a corpus and a guest have to come from the same version or
+the guest rejects the input. Artifacts are named after the zkVM SDK that built them, and that SDK has
+to be the one this crate links, so moving to another version means bumping the ere-guests and
+`ere-catalog` pins together, since the catalog is what names the SDK version.
 
-The GitHub API serves build artifacts only to an authenticated caller, so `GITHUB_TOKEN` has to hold
-a token. ere-guests is public, so any token is enough. Artifacts expire on the repository's retention
-window, after which the pin has to move. Passing `--elf` bypasses the download entirely.
+The GitHub API serves build artifacts only to an authenticated caller, so a branch or revision pin
+needs `GITHUB_TOKEN` to hold a token. ere-guests is public, so any token is enough. Artifacts also
+expire on the repository's retention window, after which the pin has to move, while release assets
+do not. Passing `--elf` bypasses the download entirely.
 
 Not every guest is built for every zkVM. ere-guests compiles Ethrex and Reth for each zkVM it
 supports, while Zesu is republished from a Consensys release and only for ZisK, so no Zesu guest

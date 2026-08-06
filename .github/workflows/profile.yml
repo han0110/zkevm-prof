@@ -84,9 +84,9 @@ jobs:
           find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
 
       - name: Profile
-        # The guest is downloaded from an ere-guests build artifact, which the GitHub API serves only
-        # to an authenticated caller. ere-guests is public, so the job's own token is enough and no
-        # cross-repository secret is needed.
+        # A guest downloaded from an ere-guests build artifact, which is what every pin other than
+        # a tag resolves to, is served by the GitHub API only to an authenticated caller. ere-guests
+        # is public, so the job's own token is enough and no cross-repository secret is needed.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

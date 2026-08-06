@@ -28,8 +28,11 @@ openvm-stark-sdk = { git = "https://github.com/openvm-org/stark-backend.git", br
 openvm-transpiler = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.1.0-preview" }
 
 # ere
-ere-catalog = { git = "https://github.com/eth-act/ere", rev = "c8d621df229526fbab3c8012656c38213e079b50" }
+ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.15.0" }
 
 # ere-guests
-stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", rev = "c0e111032878843b496715d4b4903c7cd0ad2043" }
-stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", rev = "c0e111032878843b496715d4b4903c7cd0ad2043" }
+stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
+stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
+
+[build-dependencies]
+cargo_metadata = "0.23"

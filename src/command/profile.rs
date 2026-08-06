@@ -1,8 +1,8 @@
 //! The `profile` command.
 //!
 //! Resolves the guest ELF, then runs it over a fixture corpus on the chosen zkVM. Guests built by
-//! ere-guests are fetched from the artifacts of one commit's build; Nethermind is not part of that
-//! catalog, so its guest is published from a Nethermind fork and fetched from there instead.
+//! ere-guests are fetched at the version this crate pins the catalog to; Nethermind is not part of
+//! that catalog, so its guest is published from a Nethermind fork and fetched from there instead.
 
 use std::{
     env,
@@ -30,11 +30,14 @@ use crate::{
     zkvm::{Cost, Entry, Meta, Profile, Profiler, profiler},
 };
 
-/// ere-guests commit the profiled guests are built by.
+/// ere-guests release the profiled guests are published in, absent unless the pin carries a tag.
 ///
-/// Guests come from the build artifacts of this commit rather than from a release, since no release
-/// yet carries the OpenVM `v2.1.0-preview` guests this crate is pinned against.
-const ERE_GUESTS_COMMIT: &str = "c0e111032878843b496715d4b4903c7cd0ad2043";
+/// The build script fills this and the commit below from the Cargo pin of the catalog this crate
+/// links, so the guests and the catalog naming their version come from the same ere-guests build.
+const ERE_GUESTS_TAG: Option<&str> = option_env!("ERE_GUESTS_TAG");
+
+/// ere-guests commit the profiled guests are built by.
+const ERE_GUESTS_COMMIT: &str = env!("ERE_GUESTS_COMMIT");
 
 /// Environment variable holding the token the artifact download authenticates with.
 ///
@@ -110,11 +113,16 @@ pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Res
             .await
         }
         _ => {
-            let github_token = env::var(GITHUB_TOKEN).with_context(|| {
-                format!("{GITHUB_TOKEN} must hold a token that can read ere-guests build artifacts")
-            })?;
-            Ok(Downloader::from_commit(ERE_GUESTS_COMMIT, &github_token)
-                .await?
+            let downloader = match ERE_GUESTS_TAG {
+                Some(tag) => Downloader::from_tag(tag).await?,
+                None => {
+                    let github_token = env::var(GITHUB_TOKEN).with_context(|| {
+                        format!("{GITHUB_TOKEN} must hold a token that can read ere-guests build artifacts")
+                    })?;
+                    Downloader::from_commit(ERE_GUESTS_COMMIT, &github_token).await?
+                }
+            };
+            Ok(downloader
                 .download(stateless_validator.try_into()?, zkvm)
                 .await?
                 .elf)

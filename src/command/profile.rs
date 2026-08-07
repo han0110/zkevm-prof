@@ -7,7 +7,8 @@
 use std::{
     env,
     fs::{self, File},
-    io::BufWriter,
+    io::{BufWriter, Write, stderr},
+    os::fd::AsFd,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     str::FromStr,
@@ -173,7 +174,7 @@ pub struct ProfileCmd {
     /// zkVM to profile the guest on.
     #[arg(
         long,
-        value_parser = PossibleValuesParser::new(["openvm", "zisk"])
+        value_parser = PossibleValuesParser::new(["openvm", "sp1", "zisk"])
             .map(|value| zkVMKind::from_str(&value).expect("the value came from the list above"))
     )]
     zkvm: zkVMKind,
@@ -224,16 +225,23 @@ impl ProfileCmd {
             paths.len()
         );
 
-        // Backends chatter on stdout while they run; the ZisK emulator prints its whole report on
-        // every block. Progress goes to stderr, so dropping stdout for the run costs nothing.
-        let silenced = Gag::stdout()?;
+        // Backends chatter on both streams while they run, the ZisK emulator on stdout with its
+        // whole report per block and SP1 on stderr with what the guest writes. Progress goes to a
+        // copy of stderr taken before the run, so dropping both streams costs nothing.
+        let progress = File::from(stderr().as_fd().try_clone_to_owned()?);
+        let report = |line: String| {
+            (&progress)
+                .write_all(format!("{line}\n").as_bytes())
+                .expect("the copy of stderr is writable")
+        };
+        let silenced = (Gag::stdout()?, Gag::stderr()?);
         let done = AtomicUsize::new(0);
         let entries: Vec<(String, Entry)> = paths
             .par_iter()
             .flat_map(|path| match fixture::load(path) {
                 Ok(fixtures) => fixtures,
                 Err(error) => {
-                    eprintln!("{error:#}");
+                    report(format!("{error:#}"));
                     Vec::new()
                 }
             })
@@ -244,7 +252,7 @@ impl ProfileCmd {
                 match result {
                     Ok(cost) => {
                         if done.is_multiple_of(25) {
-                            eprintln!("[{done}] {}", fixture.test_name);
+                            report(format!("[{done}] {}", fixture.test_name));
                         }
                         Some((
                             fixture.test_name,
@@ -255,7 +263,7 @@ impl ProfileCmd {
                         ))
                     }
                     Err(error) => {
-                        eprintln!("[{done}] {}: {error:#}", fixture.test_name);
+                        report(format!("[{done}] {}: {error:#}", fixture.test_name));
                         None
                     }
                 }

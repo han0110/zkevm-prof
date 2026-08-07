@@ -1,7 +1,7 @@
 /* Published cost report. One JSON per zkVM is written by `zkevm-prof report` and published beside
    this file, so a tab is one workflow run's batch and never mixes results from two of them. */
 
-const ZKVMS = ['openvm', 'zisk'];
+const ZKVMS = ['openvm', 'sp1', 'zisk'];
 
 const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 

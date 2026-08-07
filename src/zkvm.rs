@@ -5,11 +5,12 @@
 //! walking, the output format or the report.
 
 pub mod openvm;
+pub mod sp1;
 pub mod zisk;
 
 use std::collections::BTreeMap;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use ere_catalog::zkVMKind;
 use serde::{Deserialize, Serialize};
 
@@ -34,8 +35,8 @@ pub struct Composition {
 pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
     match zkvm {
         zkVMKind::OpenVM => Ok(&openvm::COMPOSITION),
+        zkVMKind::SP1 => Ok(&sp1::COMPOSITION),
         zkVMKind::Zisk => Ok(&zisk::COMPOSITION),
-        zkVMKind::SP1 => bail!("{zkvm} has no profiling backend"),
     }
 }
 
@@ -50,8 +51,8 @@ pub trait Profiler: Sync {
 pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
     match zkvm {
         zkVMKind::OpenVM => Ok(Box::new(openvm::OpenVMProfiler::new(elf)?)),
+        zkVMKind::SP1 => Ok(Box::new(sp1::SP1Profiler::new(elf)?)),
         zkVMKind::Zisk => Ok(Box::new(zisk::ZiskProfiler::new(elf)?)),
-        zkVMKind::SP1 => bail!("{zkvm} has no profiling backend"),
     }
 }
 

@@ -43,6 +43,9 @@ jobs:
           # archives, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      - name: Build the SP1 runner binary
+        run: bash .github/scripts/build-sp1-runner.sh
+
       - run: cargo fmt --all --check
 
       - run: cargo clippy --release --all-targets --locked -- -D warnings

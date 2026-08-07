@@ -25,7 +25,7 @@ zkevm-prof profile \
 
 | Option | Values | Meaning |
 | --- | --- | --- |
-| `--zkvm` | `openvm`, `zisk` | zkVM the guest is profiled on. |
+| `--zkvm` | `openvm`, `sp1`, `zisk` | zkVM the guest is profiled on. |
 | `--stateless-validator` | `ethrex`, `nethermind`, `reth`, `zesu` | Guest to profile. |
 | `--input` | path | Directory of EEST fixtures, walked recursively for `.json`. |
 | `--output` | path | Where the profile JSON is written. |
@@ -58,8 +58,9 @@ little memory.
 RAYON_NUM_THREADS=8 zkevm-prof profile --zkvm zisk ...
 ```
 
-Progress and failures go to stderr, leaving stdout to the backends. A failed block is reported and
-skipped, the run prints how many were skipped, and the command fails only when every block failed.
+Progress and failures go to stderr, and whatever a backend prints on either stream while it runs is
+dropped. A failed block is reported and skipped, the run prints how many were skipped, and the
+command fails only when every block failed.
 
 ## report
 
@@ -84,10 +85,10 @@ count and the time and workflow run that produced them. `md` renders the same fi
 [`templates/report.md`](../templates/report.md), for pasting into a pull request.
 
 The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
-`openvm.json` fills the OpenVM tab and `zisk.json` the ZisK tab, and a tab always shows one run's
-batch rather than a mix of two. Numbers are formatted in the page rather than in the report, so the
-JSON stays the raw measurement. Opening a tab records it in the URL fragment, which makes a tab
-linkable.
+`openvm.json` fills the OpenVM tab, `sp1.json` the SP1 tab and `zisk.json` the ZisK tab, and a tab
+always shows one run's batch rather than a mix of two. Numbers are formatted in the page rather than
+in the report, so the JSON stays the raw measurement. Opening a tab records it in the URL fragment,
+which makes a tab linkable.
 
 ## Guests
 
@@ -107,7 +108,7 @@ do not. Passing `--elf` bypasses the download entirely.
 
 Not every guest is built for every zkVM. ere-guests compiles Ethrex and Reth for each zkVM it
 supports, while Zesu is republished from a Consensys release and only for ZisK, so no Zesu guest
-exists on OpenVM. A caller of the profile workflow lists only the guests its zkVM has.
+exists on OpenVM or SP1. A caller of the profile workflow lists only the guests its zkVM has.
 
 Nethermind is outside the ere-guests catalog. Its guest is published from a fork under the
 `glamsterdam-devnet-7` tag, following the ere-guests asset naming so it resolves alike. Rebuilding it
@@ -143,28 +144,51 @@ shared library once per ELF. That build needs LLVM clang 19 or newer and a match
 [`install-llvm.sh`](../.github/scripts/install-llvm.sh). It dominates a run and does not grow with
 the corpus, so metering more blocks is nearly free once it is done.
 
+SP1 prices an execution as gas, which weighs the trace cells the AIRs an execution touches have to
+commit to against the constraints those AIRs evaluate. A profile records their blended sum under
+`cost`. SP1 reports gas as that sum divided by 191 with a rounding step per chunk, so the profile
+keeps the sum, which adds up to its own parts exactly and ranks blocks identically.
+
+The two weightings apply to every AIR alike, so they say what kind of prover work a block buys rather
+than what the block did. A profile splits the total by the accumulators SP1 charges through instead,
+recording instructions under `opcode`, precompiles under `syscall` and the chips the machine runs on
+the program's behalf under `system`. Precompiles are charged in place or deferred to a later shard
+depending on the retained event presets, which moves rows between two counters without repricing
+them, so `syscall` covers both.
+
+Gas moves with the size of the chunks the trace is cut into, since a chunk boundary is accounted a
+shard boundary, so the profiler pins the cadence SP1 calibrated gas against. That cadence reserves
+over 2 GiB of trace buffer per thread, well past what the other backends hold, so the pool needs
+capping on a machine with little memory.
+
 Adding a zkVM means implementing `Profiler` in a module under `src/zkvm` and declaring how its cost
 map decomposes. The cost is an open map of whatever kinds that zkVM charges for, so the fixture
 walking, the output format and the report need no change.
 
 ```rust
 pub const COMPOSITION: Composition = Composition {
-    total: "total",
-    components: &["base", "main", "memory", "opcodes", "precompiles"],
+    total: "cost",
+    components: &[Kind {
+        name: "memory",
+        note: "reads and writes",
+    }],
 };
 ```
 
 The report reads `meta.zkvm` and picks that backend's composition, so a profile never repeats the
-shape of its own cost map. A zkVM that prices an execution as one number leaves `components` empty,
-and the report drops its composition section rather than drawing a bar of one segment.
+shape of its own cost map. Each kind carries the note the report prints under the chart, which is
+where a reader learns what the kind covers. A zkVM that prices an execution as one number leaves
+`components` empty, and the report drops its composition section rather than drawing a bar of one
+segment.
 
 ## Continuous integration
 
 [`profile.yml`](../.github/workflows/profile.yml) is a reusable workflow that profiles a matrix of
 guests over a mainnet corpus, aggregates the results and publishes the page to GitHub Pages from
 `main`. It takes the zkVM and the guests it has a built ELF for as inputs, so adding a backend means
-adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml) and
-[`profile-openvm.yml`](../.github/workflows/profile-openvm.yml) are those callers. Every job that
+adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml),
+[`profile-openvm.yml`](../.github/workflows/profile-openvm.yml) and
+[`profile-sp1.yml`](../.github/workflows/profile-sp1.yml) are those callers. Every job that
 builds this crate first installs the LLVM toolchain rvr needs, since Ubuntu ships a clang older than
 rvr accepts and no lld at all.
 

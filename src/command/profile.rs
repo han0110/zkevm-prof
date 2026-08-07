@@ -7,7 +7,8 @@
 use std::{
     env,
     fs::{self, File},
-    io::BufWriter,
+    io::{BufWriter, Write, stderr},
+    os::fd::AsFd,
     panic::{AssertUnwindSafe, catch_unwind},
     path::PathBuf,
     str::FromStr,
@@ -45,12 +46,27 @@ const ERE_GUESTS_COMMIT: &str = env!("ERE_GUESTS_COMMIT");
 /// fetched without a token.
 const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
-/// Release the Nethermind guest is fetched from, which is also the version it is known by.
+/// Release a guest the ere-guests catalog cannot supply is fetched from, which is also the version
+/// it is known by.
 ///
-/// Nethermind has no ere-guests release, so its guest is published from a fork, built by the same
-/// `make build` recipe the Nethermind release workflow runs. Assets follow the ere-guests naming so
-/// a fork-released guest and a catalog one resolve alike.
-const NETHERMIND_TAG: &str = "glamsterdam-devnet-7";
+/// A fork names its assets the way ere-guests does, so a fork-released guest and a catalog one
+/// resolve alike.
+const FORK_TAG: &str = "glamsterdam-devnet-7";
+
+/// Repository a guest the ere-guests catalog cannot supply is published from.
+///
+/// Nethermind is absent from the catalog for every zkVM, so its guest is published from a fork
+/// built by the same `make build` recipe the Nethermind release workflow runs. The catalog's zesu
+/// guest is an OpenVM build from before its accelerators were implemented and traps on its first
+/// setup instruction, so that one pair comes from a fork until the catalog carries a build that
+/// runs.
+fn fork(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Option<&'static str> {
+    match (stateless_validator, zkvm) {
+        (StatelessValidator::Nethermind, _) => Some("han0110/nethermind"),
+        (StatelessValidator::Zesu, zkVMKind::OpenVM) => Some("han0110/zesu-zkvm"),
+        _ => None,
+    }
+}
 
 /// Stateless validator whose guest is profiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -74,12 +90,14 @@ impl StatelessValidator {
 
     /// Version of the guest, which the report shows beside its cost.
     ///
-    /// Nethermind is outside the ere-guests catalog, so it is versioned by the fork release it is
-    /// published under rather than by a catalog entry.
-    pub fn version(self) -> &'static str {
-        match StatelessValidatorKind::try_from(self) {
-            Ok(kind) => kind.version(),
-            Err(_) => NETHERMIND_TAG,
+    /// A guest taken from a fork is versioned by that release rather than by a catalog entry, since
+    /// the catalog entry names a build the profile is not of.
+    pub fn version(self, zkvm: zkVMKind) -> &'static str {
+        match fork(self, zkvm) {
+            Some(_) => FORK_TAG,
+            None => StatelessValidatorKind::try_from(self)
+                .expect("a guest the catalog lacks is published from a fork")
+                .version(),
         }
     }
 }
@@ -102,17 +120,17 @@ impl TryFrom<StatelessValidator> for StatelessValidatorKind {
 
 /// Returns the ELF of `stateless_validator` compiled for `zkvm`.
 pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Result<Vec<u8>> {
-    match stateless_validator {
-        StatelessValidator::Nethermind => {
+    match fork(stateless_validator, zkvm) {
+        Some(repository) => {
             download(&format!(
-                "https://github.com/han0110/nethermind/releases/download/{NETHERMIND_TAG}\
+                "https://github.com/{repository}/releases/download/{FORK_TAG}\
                  /stateless-validator-{}-{zkvm}-{}.elf",
                 stateless_validator.as_str(),
                 zkvm.sdk_version()
             ))
             .await
         }
-        _ => {
+        None => {
             let downloader = match ERE_GUESTS_TAG {
                 Some(tag) => Downloader::from_tag(tag).await?,
                 None => {
@@ -173,7 +191,7 @@ pub struct ProfileCmd {
     /// zkVM to profile the guest on.
     #[arg(
         long,
-        value_parser = PossibleValuesParser::new(["openvm", "zisk"])
+        value_parser = PossibleValuesParser::new(["openvm", "sp1", "zisk"])
             .map(|value| zkVMKind::from_str(&value).expect("the value came from the list above"))
     )]
     zkvm: zkVMKind,
@@ -224,16 +242,23 @@ impl ProfileCmd {
             paths.len()
         );
 
-        // Backends chatter on stdout while they run; the ZisK emulator prints its whole report on
-        // every block. Progress goes to stderr, so dropping stdout for the run costs nothing.
-        let silenced = Gag::stdout()?;
+        // Backends chatter on both streams while they run, the ZisK emulator on stdout with its
+        // whole report per block and SP1 on stderr with what the guest writes. Progress goes to a
+        // copy of stderr taken before the run, so dropping both streams costs nothing.
+        let progress = File::from(stderr().as_fd().try_clone_to_owned()?);
+        let report = |line: String| {
+            (&progress)
+                .write_all(format!("{line}\n").as_bytes())
+                .expect("the copy of stderr is writable")
+        };
+        let silenced = (Gag::stdout()?, Gag::stderr()?);
         let done = AtomicUsize::new(0);
         let entries: Vec<(String, Entry)> = paths
             .par_iter()
             .flat_map(|path| match fixture::load(path) {
                 Ok(fixtures) => fixtures,
                 Err(error) => {
-                    eprintln!("{error:#}");
+                    report(format!("{error:#}"));
                     Vec::new()
                 }
             })
@@ -244,7 +269,7 @@ impl ProfileCmd {
                 match result {
                     Ok(cost) => {
                         if done.is_multiple_of(25) {
-                            eprintln!("[{done}] {}", fixture.test_name);
+                            report(format!("[{done}] {}", fixture.test_name));
                         }
                         Some((
                             fixture.test_name,
@@ -255,7 +280,7 @@ impl ProfileCmd {
                         ))
                     }
                     Err(error) => {
-                        eprintln!("[{done}] {}: {error:#}", fixture.test_name);
+                        report(format!("[{done}] {}: {error:#}", fixture.test_name));
                         None
                     }
                 }
@@ -281,7 +306,7 @@ impl ProfileCmd {
                 zkvm: self.zkvm,
                 zkvm_version: self.zkvm.sdk_version().to_owned(),
                 guest: self.stateless_validator.as_str().to_owned(),
-                guest_version: self.stateless_validator.version().to_owned(),
+                guest_version: self.stateless_validator.version(self.zkvm).to_owned(),
             },
         };
         let file = File::create(&self.output)

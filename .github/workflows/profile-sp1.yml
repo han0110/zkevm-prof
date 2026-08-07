@@ -1,4 +1,4 @@
-name: Profile OpenVM
+name: Profile SP1
 
 on:
   push:
@@ -16,5 +16,5 @@ jobs:
     permissions:
       contents: write
     with:
-      zkvm: openvm
-      stateless-validators: '["ethrex", "reth", "zesu"]'
+      zkvm: sp1
+      stateless-validators: '["ethrex", "reth"]'

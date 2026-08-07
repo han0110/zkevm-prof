@@ -13,9 +13,12 @@ Profiles of {{ view.guests.len() }} guests over {{ view.blocks }} blocks, on {{ 
 {% if !view.kinds.is_empty() %}
 ## Cost composition
 
-| Guest |{% for kind in view.kinds %} {{ kind }} |{% endfor %}
+| Guest |{% for kind in view.kinds %} {{ kind.name }} |{% endfor %}
 | --- |{% for kind in view.kinds %} ---: |{% endfor %}
 {% for guest in view.guests -%}
 | {{ guest.label }} |{% for component in guest.components %} {{ component.value }} ({{ component.share }}%) |{% endfor %}
+{% endfor %}
+{% for kind in view.kinds -%}
+- `{{ kind.name }}`: {{ kind.note }}
 {% endfor -%}
 {% endif -%}

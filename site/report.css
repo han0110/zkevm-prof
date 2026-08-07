@@ -122,6 +122,24 @@ h1 {
   font-size: 12px;
 }
 
+/* Legend for the kinds a total splits into, printed under the chart rather than above it. */
+.card ul.note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  margin: 24px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.card ul.note li::before {
+  content: '\2022';
+  margin-right: 7px;
+  color: var(--faint);
+}
+
 .card.hidden {
   display: none;
 }

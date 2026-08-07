@@ -5,11 +5,12 @@
 //! walking, the output format or the report.
 
 pub mod openvm;
+pub mod sp1;
 pub mod zisk;
 
 use std::collections::BTreeMap;
 
-use anyhow::{Result, bail};
+use anyhow::Result;
 use ere_catalog::zkVMKind;
 use serde::{Deserialize, Serialize};
 
@@ -27,15 +28,23 @@ pub struct Composition {
     pub total: &'static str,
     /// Kinds partitioning the total, in stack order. Empty when the zkVM prices an execution as one
     /// number, which leaves the total nothing to be split into.
-    pub components: &'static [&'static str],
+    pub components: &'static [Kind],
+}
+
+/// One kind a total splits into, with the note the report prints under the chart.
+pub struct Kind {
+    /// Key the cost map records the kind under.
+    pub name: &'static str,
+    /// What the kind covers, in one phrase a reader takes in at a glance.
+    pub note: &'static str,
 }
 
 /// The composition of the zkVM that produced a profile.
 pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
     match zkvm {
         zkVMKind::OpenVM => Ok(&openvm::COMPOSITION),
+        zkVMKind::SP1 => Ok(&sp1::COMPOSITION),
         zkVMKind::Zisk => Ok(&zisk::COMPOSITION),
-        zkVMKind::SP1 => bail!("{zkvm} has no profiling backend"),
     }
 }
 
@@ -50,8 +59,8 @@ pub trait Profiler: Sync {
 pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
     match zkvm {
         zkVMKind::OpenVM => Ok(Box::new(openvm::OpenVMProfiler::new(elf)?)),
+        zkVMKind::SP1 => Ok(Box::new(sp1::SP1Profiler::new(elf)?)),
         zkVMKind::Zisk => Ok(Box::new(zisk::ZiskProfiler::new(elf)?)),
-        zkVMKind::SP1 => bail!("{zkvm} has no profiling backend"),
     }
 }
 

@@ -4,30 +4,50 @@
 //! to commit to against the constraints those AIRs evaluate. A minimal trace of the run is charged
 //! one chunk at a time, the same path the SDK takes when it reports gas. Gas divides that weighted
 //! sum by 191 with a rounding step per chunk, so the profile records the sum, which stays exact.
+//!
+//! The sum splits by the accumulators SP1 charges through rather than by the two weightings, since
+//! every AIR carries both weightings and only the accumulators track what the program did.
 
-use std::sync::Arc;
+use std::{str::FromStr, sync::Arc};
 
 use anyhow::{Result, anyhow, bail};
+use enum_map::EnumMap;
 use sp1_core_executor::{
-    GAS_TRACE_CHUNK_THRESHOLD, GasEstimatingVMEnum, MinimalExecutorEnum, Program, SP1CoreOpts,
+    GAS_TRACE_CHUNK_THRESHOLD, GasEstimatingVMEnum, MinimalExecutorEnum, Program, RiscvAirId,
+    SP1CoreOpts, get_complexity_mapping,
 };
+use sp1_core_machine::riscv::RiscvAir;
+use sp1_primitives::SP1Field;
 
-use crate::zkvm::{Composition, Cost, Profiler};
+use crate::zkvm::{Composition, Cost, Kind, Profiler};
 
 /// Cost kinds that partition an SP1 total, in stack order, and the kind holding the whole.
-///
-/// Each component carries the weight gas gives it rather than its raw sum, so the two add up to the
-/// total exactly.
 pub const COMPOSITION: Composition = Composition {
     total: "cost",
-    components: &[COMPLEXITY, TRACE_AREA],
+    components: &[
+        Kind {
+            name: OPCODE,
+            note: "RISC-V instructions",
+        },
+        Kind {
+            name: SYSCALL,
+            note: "precompiles",
+        },
+        Kind {
+            name: SYSTEM,
+            note: "memory and lookup tables",
+        },
+    ],
 };
 
-/// Constraints the AIRs evaluate.
-const COMPLEXITY: &str = "complexity";
+/// Instructions the program runs.
+const OPCODE: &str = "opcode";
 
-/// Trace cells the AIRs commit to.
-const TRACE_AREA: &str = "trace_area";
+/// Precompiles the program calls, charged in place or deferred to a later shard.
+const SYSCALL: &str = "syscall";
+
+/// Chips the machine runs on the program's behalf rather than at its request.
+const SYSTEM: &str = "system";
 
 /// Weight gas gives a trace cell relative to a constraint.
 const TRACE_AREA_WEIGHT: u64 = 3;
@@ -38,6 +58,8 @@ const PROOF_NONCE: [u32; 4] = [0; 4];
 pub struct SP1Profiler {
     program: Arc<Program>,
     opts: SP1CoreOpts,
+    /// What one row of each AIR costs, which is the gas formula's two weightings already blended.
+    weights: EnumMap<RiscvAirId, u64>,
 }
 
 impl SP1Profiler {
@@ -47,7 +69,13 @@ impl SP1Profiler {
         Ok(Self {
             program: Arc::new(program),
             opts: SP1CoreOpts::default(),
+            weights: weights(),
         })
+    }
+
+    /// Charges every row at the weight of the AIR that proves it.
+    fn charge(&self, rows: impl Iterator<Item = (RiscvAirId, u64)>) -> u64 {
+        rows.map(|(air, count)| self.weights[air] * count).sum()
     }
 }
 
@@ -65,7 +93,8 @@ impl Profiler for SP1Profiler {
         // input goes in whole and carries no framing.
         executor.with_input(stateless_input);
 
-        let (mut complexity, mut trace_area, mut exit_code) = (0, 0, 0);
+        let untrusted = self.program.enable_untrusted_programs;
+        let (mut cost, mut syscall, mut system, mut exit_code) = (0, 0, 0, 0);
         while let Some(chunk) = executor
             .try_execute_chunk()
             .map_err(|error| anyhow!("execution failed: {error}"))?
@@ -79,9 +108,28 @@ impl Profiler for SP1Profiler {
             let report = vm
                 .execute()
                 .map_err(|error| anyhow!("gas estimation failed: {error}"))?;
-            let (chunk_complexity, chunk_trace_area) = vm.costs();
-            complexity += chunk_complexity;
-            trace_area += chunk_trace_area;
+            let counts = match &vm {
+                GasEstimatingVMEnum::Supervisor(vm) => &vm.gas_calculator,
+                GasEstimatingVMEnum::User(vm) => &vm.gas_calculator,
+            };
+
+            let (complexity, trace_area) = vm.costs();
+            cost += TRACE_AREA_WEIGHT * trace_area + complexity;
+            // Whether a precompile is charged in place or deferred to a later shard follows the
+            // retained event presets, which moves rows between the two maps without repricing them.
+            syscall += self.charge(
+                counts
+                    .syscall_counts
+                    .iter()
+                    .chain(counts.deferred_syscall_counts.iter())
+                    .filter_map(|(code, count)| Some((code.as_air_id_flag(untrusted)?, *count))),
+            );
+            system += self.charge(
+                counts
+                    .system_chips_counts
+                    .iter()
+                    .map(|(air, count)| (air, *count)),
+            );
             // Only the chunk the guest halts in carries an exit code, which is how SP1 folds them.
             exit_code |= report.exit_code;
         }
@@ -89,11 +137,34 @@ impl Profiler for SP1Profiler {
             bail!("the guest exited with {exit_code}");
         }
 
-        let trace_area = TRACE_AREA_WEIGHT * trace_area;
+        // Instructions are what the total has left once the precompiles and the machine's own chips
+        // are taken out, which keeps the parts summing to SP1's own figure rather than to a second
+        // reading of the same weights.
+        let opcode = cost.checked_sub(syscall + system).ok_or_else(|| {
+            anyhow!(
+                "the priced chips exceed the {} of {cost}",
+                COMPOSITION.total
+            )
+        })?;
+
         Ok(Cost::from([
-            (COMPLEXITY.to_owned(), complexity),
-            (TRACE_AREA.to_owned(), trace_area),
-            (COMPOSITION.total.to_owned(), complexity + trace_area),
+            (OPCODE.to_owned(), opcode),
+            (SYSCALL.to_owned(), syscall),
+            (SYSTEM.to_owned(), system),
+            (COMPOSITION.total.to_owned(), cost),
         ]))
     }
+}
+
+/// What one row of each AIR costs, which is its trace cells weighed against its constraints.
+///
+/// SP1 keeps the two tables apart because gas blends them only at the end. Blending them per AIR
+/// instead leaves the same total while letting it split by what the program did.
+fn weights() -> EnumMap<RiscvAirId, u64> {
+    let complexity = get_complexity_mapping();
+    let mut cells: EnumMap<RiscvAirId, u64> = EnumMap::default();
+    for (name, cost) in RiscvAir::<SP1Field>::costs() {
+        cells[RiscvAirId::from_str(&name).expect("SP1 names its own AIRs")] = cost;
+    }
+    EnumMap::from_fn(|air| TRACE_AREA_WEIGHT * cells[air] + complexity[air])
 }

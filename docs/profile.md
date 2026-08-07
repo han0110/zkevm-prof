@@ -145,10 +145,16 @@ shared library once per ELF. That build needs LLVM clang 19 or newer and a match
 the corpus, so metering more blocks is nearly free once it is done.
 
 SP1 prices an execution as gas, which weighs the trace cells the AIRs an execution touches have to
-commit to against the constraints those AIRs evaluate. A profile records those two parts under
-`trace_area` and `complexity`, already carrying the weights gas gives them, and their sum under
+commit to against the constraints those AIRs evaluate. A profile records their blended sum under
 `cost`. SP1 reports gas as that sum divided by 191 with a rounding step per chunk, so the profile
 keeps the sum, which adds up to its own parts exactly and ranks blocks identically.
+
+The two weightings apply to every AIR alike, so they say what kind of prover work a block buys rather
+than what the block did. A profile splits the total by the accumulators SP1 charges through instead,
+recording instructions under `opcode`, precompiles under `syscall` and the chips the machine runs on
+the program's behalf under `system`. Precompiles are charged in place or deferred to a later shard
+depending on the retained event presets, which moves rows between two counters without repricing
+them, so `syscall` covers both.
 
 Gas moves with the size of the chunks the trace is cut into, since a chunk boundary is accounted a
 shard boundary, so the profiler pins the cadence SP1 calibrated gas against. That cadence reserves
@@ -161,14 +167,19 @@ walking, the output format and the report need no change.
 
 ```rust
 pub const COMPOSITION: Composition = Composition {
-    total: "total",
-    components: &["base", "main", "memory", "opcodes", "precompiles"],
+    total: "cost",
+    components: &[Kind {
+        name: "memory",
+        note: "reads and writes",
+    }],
 };
 ```
 
 The report reads `meta.zkvm` and picks that backend's composition, so a profile never repeats the
-shape of its own cost map. A zkVM that prices an execution as one number leaves `components` empty,
-and the report drops its composition section rather than drawing a bar of one segment.
+shape of its own cost map. Each kind carries the note the report prints under the chart, which is
+where a reader learns what the kind covers. A zkVM that prices an execution as one number leaves
+`components` empty, and the report drops its composition section rather than drawing a bar of one
+segment.
 
 ## Continuous integration
 

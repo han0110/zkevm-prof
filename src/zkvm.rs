@@ -28,7 +28,15 @@ pub struct Composition {
     pub total: &'static str,
     /// Kinds partitioning the total, in stack order. Empty when the zkVM prices an execution as one
     /// number, which leaves the total nothing to be split into.
-    pub components: &'static [&'static str],
+    pub components: &'static [Kind],
+}
+
+/// One kind a total splits into, with the note the report prints under the chart.
+pub struct Kind {
+    /// Key the cost map records the kind under.
+    pub name: &'static str,
+    /// What the kind covers, in one phrase a reader takes in at a glance.
+    pub note: &'static str,
 }
 
 /// The composition of the zkVM that produced a profile.

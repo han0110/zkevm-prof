@@ -10,7 +10,7 @@ use zisk_common::EmuTrace;
 use zisk_core::{Riscv2zisk, ZiskRom};
 use ziskemu::{Emu, EmuOptions};
 
-use crate::zkvm::{Composition, Cost, Profiler};
+use crate::zkvm::{Composition, Cost, Kind, Profiler};
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
 ///
@@ -19,7 +19,28 @@ use crate::zkvm::{Composition, Cost, Profiler};
 /// `STEPS` because it counts work rather than pricing it.
 pub const COMPOSITION: Composition = Composition {
     total: "total",
-    components: &["base", "main", "memory", "opcodes", "precompiles"],
+    components: &[
+        Kind {
+            name: "base",
+            note: "ROM and tables",
+        },
+        Kind {
+            name: "main",
+            note: "Main AIR",
+        },
+        Kind {
+            name: "memory",
+            note: "Memory",
+        },
+        Kind {
+            name: "opcodes",
+            note: "ZisK instructions",
+        },
+        Kind {
+            name: "precompiles",
+            note: "precompiles",
+        },
+    ],
 };
 
 /// The kinds [`COMPOSITION`] names, which are the report labels worth reading.
@@ -27,7 +48,7 @@ fn kinds() -> impl Iterator<Item = &'static str> {
     COMPOSITION
         .components
         .iter()
-        .copied()
+        .map(|kind| kind.name)
         .chain([COMPOSITION.total])
 }
 
@@ -103,12 +124,15 @@ fn parse(report: &str) -> Result<Cost> {
 
     // ZisK computes the total as exactly this sum, so parts that fall short of it mean the summary
     // block was misread rather than that the emulator disagrees with itself.
-    let summed: u64 = COMPOSITION.components.iter().map(|kind| cost[*kind]).sum();
+    let summed: u64 = COMPOSITION
+        .components
+        .iter()
+        .map(|kind| cost[kind.name])
+        .sum();
     let total = cost[COMPOSITION.total];
     ensure!(
         summed == total,
-        "the report's {:?} sum to {summed}, not the {} of {total}",
-        COMPOSITION.components,
+        "the report's components sum to {summed}, not the {} of {total}",
         COMPOSITION.total
     );
 

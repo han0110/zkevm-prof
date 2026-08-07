@@ -201,15 +201,14 @@ fn build_series(
         let components = composition
             .components
             .iter()
-            .map(|kind| value(kind))
+            .map(|kind| value(kind.name))
             .collect::<Result<Vec<f64>>>()?;
         let summed: f64 = components.iter().sum();
         // A stacked bar that does not reach its own total would misstate every share it draws. A
         // total priced as one number has no components, and so nothing to check.
         if !components.is_empty() && (summed - total).abs() > total * 1e-9 {
             bail!(
-                "{label}/{name}: {:?} sum to {summed}, not the {} of {total}",
-                composition.components,
+                "{label}/{name}: components sum to {summed}, not the {} of {total}",
                 composition.total
             );
         }
@@ -248,6 +247,8 @@ struct Report {
     run_url: Option<String>,
     blocks: usize,
     kinds: Vec<String>,
+    /// What each kind covers, in the order the kinds are listed.
+    notes: Vec<String>,
     guests: Vec<ReportGuest>,
     lines: Vec<ReportLine>,
 }
@@ -295,7 +296,12 @@ impl Report {
             kinds: composition
                 .components
                 .iter()
-                .map(|kind| (*kind).to_owned())
+                .map(|kind| kind.name.to_owned())
+                .collect(),
+            notes: composition
+                .components
+                .iter()
+                .map(|kind| kind.note.to_owned())
                 .collect(),
             guests: series
                 .iter()
@@ -332,8 +338,14 @@ fn line(series: &Series) -> ReportLine {
 struct View {
     blocks: usize,
     zkvm_version: String,
-    kinds: Vec<String>,
+    kinds: Vec<Legend>,
     guests: Vec<Guest>,
+}
+
+/// A kind's column header and the note printed under the table.
+struct Legend {
+    name: String,
+    note: String,
 }
 
 struct Guest {
@@ -368,7 +380,10 @@ impl View {
             kinds: composition
                 .components
                 .iter()
-                .map(|kind| (*kind).to_owned())
+                .map(|kind| Legend {
+                    name: kind.name.to_owned(),
+                    note: kind.note.to_owned(),
+                })
                 .collect(),
             guests: series
                 .iter()

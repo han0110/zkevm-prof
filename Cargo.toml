@@ -28,7 +28,10 @@ openvm-stark-sdk = { git = "https://github.com/han0110/stark-backend.git", branc
 openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "patch/v2.1.0-preview" }
 
 # sp1
+enum-map = "2"
 sp1-core-executor = "6.3.1"
+sp1-core-machine = "6.3.1"
+sp1-primitives = "6.3.1"
 
 # ere
 ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.15.0" }

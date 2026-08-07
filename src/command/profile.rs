@@ -46,12 +46,27 @@ const ERE_GUESTS_COMMIT: &str = env!("ERE_GUESTS_COMMIT");
 /// fetched without a token.
 const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
-/// Release the Nethermind guest is fetched from, which is also the version it is known by.
+/// Release a guest the ere-guests catalog cannot supply is fetched from, which is also the version
+/// it is known by.
 ///
-/// Nethermind has no ere-guests release, so its guest is published from a fork, built by the same
-/// `make build` recipe the Nethermind release workflow runs. Assets follow the ere-guests naming so
-/// a fork-released guest and a catalog one resolve alike.
-const NETHERMIND_TAG: &str = "glamsterdam-devnet-7";
+/// A fork names its assets the way ere-guests does, so a fork-released guest and a catalog one
+/// resolve alike.
+const FORK_TAG: &str = "glamsterdam-devnet-7";
+
+/// Repository a guest the ere-guests catalog cannot supply is published from.
+///
+/// Nethermind is absent from the catalog for every zkVM, so its guest is published from a fork
+/// built by the same `make build` recipe the Nethermind release workflow runs. The catalog's zesu
+/// guest is an OpenVM build from before its accelerators were implemented and traps on its first
+/// setup instruction, so that one pair comes from a fork until the catalog carries a build that
+/// runs.
+fn fork(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Option<&'static str> {
+    match (stateless_validator, zkvm) {
+        (StatelessValidator::Nethermind, _) => Some("han0110/nethermind"),
+        (StatelessValidator::Zesu, zkVMKind::OpenVM) => Some("han0110/zesu-zkvm"),
+        _ => None,
+    }
+}
 
 /// Stateless validator whose guest is profiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
@@ -75,12 +90,14 @@ impl StatelessValidator {
 
     /// Version of the guest, which the report shows beside its cost.
     ///
-    /// Nethermind is outside the ere-guests catalog, so it is versioned by the fork release it is
-    /// published under rather than by a catalog entry.
-    pub fn version(self) -> &'static str {
-        match StatelessValidatorKind::try_from(self) {
-            Ok(kind) => kind.version(),
-            Err(_) => NETHERMIND_TAG,
+    /// A guest taken from a fork is versioned by that release rather than by a catalog entry, since
+    /// the catalog entry names a build the profile is not of.
+    pub fn version(self, zkvm: zkVMKind) -> &'static str {
+        match fork(self, zkvm) {
+            Some(_) => FORK_TAG,
+            None => StatelessValidatorKind::try_from(self)
+                .expect("a guest the catalog lacks is published from a fork")
+                .version(),
         }
     }
 }
@@ -103,17 +120,17 @@ impl TryFrom<StatelessValidator> for StatelessValidatorKind {
 
 /// Returns the ELF of `stateless_validator` compiled for `zkvm`.
 pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Result<Vec<u8>> {
-    match stateless_validator {
-        StatelessValidator::Nethermind => {
+    match fork(stateless_validator, zkvm) {
+        Some(repository) => {
             download(&format!(
-                "https://github.com/han0110/nethermind/releases/download/{NETHERMIND_TAG}\
+                "https://github.com/{repository}/releases/download/{FORK_TAG}\
                  /stateless-validator-{}-{zkvm}-{}.elf",
                 stateless_validator.as_str(),
                 zkvm.sdk_version()
             ))
             .await
         }
-        _ => {
+        None => {
             let downloader = match ERE_GUESTS_TAG {
                 Some(tag) => Downloader::from_tag(tag).await?,
                 None => {
@@ -289,7 +306,7 @@ impl ProfileCmd {
                 zkvm: self.zkvm,
                 zkvm_version: self.zkvm.sdk_version().to_owned(),
                 guest: self.stateless_validator.as_str().to_owned(),
-                guest_version: self.stateless_validator.version().to_owned(),
+                guest_version: self.stateless_validator.version(self.zkvm).to_owned(),
             },
         };
         let file = File::create(&self.output)

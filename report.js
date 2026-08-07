@@ -1,7 +1,7 @@
 /* Published cost report. One JSON per zkVM is written by `zkevm-prof report` and published beside
    this file, so a tab is one workflow run's batch and never mixes results from two of them. */
 
-const ZKVMS = ['openvm', 'zisk'];
+const ZKVMS = ['openvm', 'sp1', 'zisk'];
 
 const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
@@ -242,6 +242,13 @@ function renderComposition(data) {
     return null;
   }
   card.classList.remove('hidden');
+
+  /* Each tab is published by its own run, so a report written before the notes existed loads
+     alongside one that carries them and simply goes without a legend. */
+  const notes = data.notes ?? [];
+  document.getElementById('composition-note').innerHTML = data.kinds
+    .map((kind, index) => (notes[index] ? `<li><code>${kind}</code>: ${notes[index]}</li>` : ''))
+    .join('');
 
   let enabledKinds = new Set(data.kinds);
   let showCost = false;

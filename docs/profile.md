@@ -139,10 +139,21 @@ AIR that proves it, so the total is the trace cells the app VM commits to. A pro
 total under `cost`. The number depends on the app VM configuration, which is kept equal to the one
 ere proves these guests under.
 
+That mode reports the total as one number, so a profile splits it by running the execution once per
+kind against an artifact priced with only that kind's AIR widths. The cost is a weighted sum over the
+AIRs an execution charges and the weights belong to the caller, so zeroing the rest leaves exactly
+the cells one kind contributes. The accelerator extensions are recorded under `precompile` and
+whatever a guest runs in the base instruction set under `rv64`, which is the split that says how far
+a guest leans on the zkVM rather than on its own code.
+
+No instruction can add a row to the AIRs that argue memory consistency, to the lookup tables or to
+the periphery hasher, so they belong to no kind. A third run prices every AIR and the kinds are held
+to summing to it, which proves those AIRs stayed at zero rather than assuming it.
+
 Running an OpenVM guest goes through rvr, which translates the program to C and builds it into a
-shared library once per ELF. That build needs LLVM clang 19 or newer and a matching lld, installed by
-[`install-llvm.sh`](../.github/scripts/install-llvm.sh). It dominates a run and does not grow with
-the corpus, so metering more blocks is nearly free once it is done.
+shared library, once per artifact per ELF. That build needs LLVM clang 19 or newer and a matching
+lld, installed by [`install-llvm.sh`](../.github/scripts/install-llvm.sh). It dominates a run and
+does not grow with the corpus, so metering more blocks stays cheap once it is done.
 
 SP1 prices an execution as gas, which weighs the trace cells the AIRs an execution touches have to
 commit to against the constraints those AIRs evaluate. A profile records their blended sum under

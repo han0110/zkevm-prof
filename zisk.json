@@ -1,14 +1,21 @@
 {
   "zkvm": "zisk",
   "zkvm_version": "v1.0.0-alpha",
-  "generated_at": 1786093062,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31117282364",
+  "generated_at": 1786133280,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31188281599",
   "blocks": 1000,
   "kinds": [
     "base",
     "main",
     "memory",
     "opcodes",
+    "precompiles"
+  ],
+  "notes": [
+    "ROM and tables",
+    "Main AIR",
+    "Memory",
+    "ZisK instructions",
     "precompiles"
   ],
   "guests": [

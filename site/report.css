@@ -184,14 +184,45 @@ h1 {
   width: 100%;
 }
 
+/* Columns are fixed so a tab carrying different names and row counts cannot reshape the table, and
+   sized to their own widest value or heading rather than to the card, which four short columns would
+   otherwise stretch across. Once the card is narrower than their sum the table shrinks with it. */
 #cost {
-  width: 100%;
+  /* Pixel widths, carried unitless so each column can be stated as its share of their sum. An
+     absolute width would pin the columns open and leave the table overflowing a narrow card. */
+  --col-guest: 172;
+  --col-version: 104;
+  --col-total: 120;
+  --col-relative: 96;
+  --col-sum: calc(var(--col-guest) + var(--col-version) + var(--col-total) + var(--col-relative));
+  --cell-gap: 22px;
+  --row-hover: rgb(48 37 27 / 0.4);
+
+  width: calc(var(--col-sum) * 1px);
+  max-width: 100%;
+  table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
 }
 
+#cost th:nth-child(1) {
+  width: calc(var(--col-guest) / var(--col-sum) * 100%);
+}
+
+#cost th:nth-child(2) {
+  width: calc(var(--col-version) / var(--col-sum) * 100%);
+}
+
+#cost th:nth-child(3) {
+  width: calc(var(--col-total) / var(--col-sum) * 100%);
+}
+
+#cost th:nth-child(4) {
+  width: calc(var(--col-relative) / var(--col-sum) * 100%);
+}
+
 #cost th {
-  padding: 6px 10px;
+  padding: 6px var(--cell-gap);
   border-bottom: 1px solid var(--border);
   color: var(--faint);
   font-size: 12px;
@@ -199,13 +230,21 @@ h1 {
   letter-spacing: 0.05em;
   text-align: right;
   text-transform: uppercase;
+  white-space: nowrap;
 }
 
 #cost td {
-  padding: 7px 10px;
+  padding: 7px var(--cell-gap);
   border-bottom: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
   text-align: right;
+  white-space: nowrap;
+}
+
+/* Only the guest name can outrun its column, and only once the table is shrinking. */
+#cost td:first-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 #cost th:first-child,
@@ -213,6 +252,62 @@ h1 {
 #cost th:nth-child(2),
 #cost td:nth-child(2) {
   text-align: left;
+}
+
+/* Outer edges run flush with the card's heading instead of carrying the column gap. */
+#cost th:first-child,
+#cost td:first-child {
+  padding-left: 0;
+}
+
+#cost th:last-child,
+#cost td:last-child {
+  padding-right: 0;
+}
+
+/* A cut version is dotted to mark that it carries more, and on hover grows to its full text in place
+   over whatever sits to its right. Anchored to the cell because a table row carries no defined
+   positioning context. */
+#cost td[aria-label] {
+  position: relative;
+  cursor: help;
+  text-decoration: underline dotted var(--faint);
+  text-underline-offset: 3px;
+}
+
+/* Filled with the row's own hovered colour so the growth reads as the text completing rather than a
+   panel opening. It runs to the end of the total column at the least, so the figure it covers goes
+   whole rather than leaving a stub beside the text, and further still when the version is longer. */
+#cost td[aria-label]::after {
+  content: attr(aria-label);
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--cell-gap);
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  min-width: calc(
+    (var(--col-version) + var(--col-total)) / var(--col-version) * 100% - var(--cell-gap)
+  );
+  /* Stops at the table's own right edge, which a narrow card would otherwise let it run past and
+     widen the page by, hovered or not. */
+  max-width: calc(
+    (var(--col-version) + var(--col-total) + var(--col-relative)) / var(--col-version) * 100% -
+      var(--cell-gap)
+  );
+  padding-right: 12px;
+  overflow: hidden;
+  background: linear-gradient(var(--row-hover), var(--row-hover)), var(--surface);
+  color: var(--foreground);
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms;
+}
+
+#cost td[aria-label]:hover::after {
+  opacity: 1;
 }
 
 #cost th[data-sort] {
@@ -237,7 +332,7 @@ h1 {
 }
 
 #cost tbody tr:hover {
-  background: rgb(48 37 27 / 0.4);
+  background: var(--row-hover);
 }
 
 #cost tbody tr:last-child td {

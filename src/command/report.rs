@@ -39,7 +39,6 @@ struct Series {
     blocks: Vec<Block>,
     total: f64,
     components: Vec<f64>,
-    gas_used: u64,
 }
 
 /// Shape the report is written in.
@@ -231,7 +230,6 @@ fn build_series(
         guest: profile.meta.guest.clone(),
         guest_version: profile.meta.guest_version.clone(),
         total: blocks.iter().map(|block| block.total).sum(),
-        gas_used: blocks.iter().map(|block| block.gas_used).sum(),
         components,
         blocks,
     })
@@ -259,8 +257,6 @@ struct ReportGuest {
     guest: String,
     guest_version: String,
     total: f64,
-    mean: f64,
-    per_gas: f64,
     relative: f64,
     components: Vec<f64>,
 }
@@ -310,8 +306,6 @@ impl Report {
                     guest: guest.guest.clone(),
                     guest_version: guest.guest_version.clone(),
                     total: guest.total,
-                    mean: guest.total / guest.blocks.len() as f64,
-                    per_gas: guest.total / guest.gas_used as f64,
                     relative: guest.total / cheapest,
                     components: guest.components.clone(),
                 })
@@ -352,8 +346,6 @@ struct Guest {
     label: String,
     version: String,
     total: String,
-    mean: String,
-    per_gas: String,
     relative: String,
     components: Vec<Component>,
 }
@@ -391,8 +383,6 @@ impl View {
                     label: guest.label.clone(),
                     version: guest.guest_version.clone(),
                     total: si(guest.total),
-                    mean: si(guest.total / guest.blocks.len() as f64),
-                    per_gas: format!("{:.1}", guest.total / guest.gas_used as f64),
                     relative: format!("{:.2}x", guest.total / cheapest),
                     components: guest
                         .components

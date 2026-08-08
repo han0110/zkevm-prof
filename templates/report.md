@@ -5,10 +5,10 @@ Profiles of {{ view.guests.len() }} guests over {{ view.blocks }} blocks, on {{ 
 
 ## Cost
 
-| Guest | Version | Total cost | Mean per block | Cost per gas | Relative |
-| --- | --- | ---: | ---: | ---: | ---: |
+| Guest | Version | Total cost | Relative |
+| --- | --- | ---: | ---: |
 {% for guest in view.guests -%}
-| {{ guest.label }} | {{ guest.version }} | {{ guest.total }} | {{ guest.mean }} | {{ guest.per_gas }} | {{ guest.relative }} |
+| {{ guest.label }} | {{ guest.version }} | {{ guest.total }} | {{ guest.relative }} |
 {% endfor -%}
 {% if !view.kinds.is_empty() %}
 ## Cost composition

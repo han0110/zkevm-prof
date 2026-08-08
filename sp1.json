@@ -1,8 +1,8 @@
 {
   "zkvm": "sp1",
   "zkvm_version": "v6.3.1",
-  "generated_at": 1786125735,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31188281152",
+  "generated_at": 1786182580,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31243810374",
   "blocks": 1000,
   "kinds": [
     "opcode",
@@ -20,8 +20,6 @@
       "guest": "ethrex",
       "guest_version": "v23.0.0",
       "total": 168995962037928.0,
-      "mean": 168995962037.928,
-      "per_gas": 5617.97709289285,
       "relative": 1.1539942000100307,
       "components": [
         122717227722403.0,
@@ -34,8 +32,6 @@
       "guest": "reth",
       "guest_version": "f804dc1",
       "total": 146444377308360.0,
-      "mean": 146444377308.36,
-      "per_gas": 4868.288846550544,
       "relative": 1.0,
       "components": [
         97459097599423.0,

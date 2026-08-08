@@ -211,20 +211,27 @@ function renderRun(data) {
     .join('');
 }
 
+/* Width a short commit hash and a semver tag both come to, so the two identifiers a guest is
+   normally pinned by survive whole and only a descriptive name is cut. */
+const VERSION_LIMIT = 7;
+
+/* A cut version keeps the whole string as the cell's label, which names it for a reader on assistive
+   technology and is the text hovering grows it back to, so the column never widens to hold it. */
+function versionCell(version) {
+  if (version.length <= VERSION_LIMIT) return '<td>' + version + '</td>';
+  return '<td aria-label="' + version + '">' + version.slice(0, VERSION_LIMIT) + '\u2026</td>';
+}
+
 function renderTable(data) {
   const body = document.getElementById('cost').tBodies[0];
   body.innerHTML = data.guests
     .map((guest) =>
       '<tr><td>' +
       guest.label +
-      '</td><td>' +
-      guest.guest_version +
-      '</td><td>' +
+      '</td>' +
+      versionCell(guest.guest_version) +
+      '<td>' +
       si(guest.total) +
-      '</td><td>' +
-      si(guest.mean) +
-      '</td><td>' +
-      guest.per_gas.toFixed(1) +
       '</td><td>' +
       guest.relative.toFixed(2) +
       'x</td></tr>'
@@ -534,6 +541,22 @@ function buildTabs() {
 window.addEventListener('hashchange', () => {
   const zkvm = location.hash.slice(1);
   if (ZKVMS.includes(zkvm) && zkvm !== current) select(zkvm);
+});
+
+/* Left and right step through the tabs. The step is read off the array, so either end simply has no
+   neighbour to move to and the selection stops there rather than wrapping. */
+window.addEventListener('keydown', (event) => {
+  const step = { ArrowLeft: -1, ArrowRight: 1 }[event.key];
+  if (!step || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+  const next = ZKVMS[ZKVMS.indexOf(current) + step];
+  if (!next) return;
+  event.preventDefault();
+  select(next);
+  // Focus follows only when it was already on a tab, so a reader partway down the page keeps theirs.
+  const tabs = document.getElementById('tabs');
+  if (document.activeElement && document.activeElement.parentElement === tabs) {
+    tabs.querySelector('button[data-zkvm="' + next + '"]').focus();
+  }
 });
 
 buildTabs();

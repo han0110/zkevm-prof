@@ -1,8 +1,8 @@
 {
   "zkvm": "openvm",
   "zkvm_version": "v2.1.0-preview",
-  "generated_at": 1786116327,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31188281891",
+  "generated_at": 1786173180,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31243810408",
   "blocks": 1000,
   "kinds": [
     "precompile",
@@ -18,8 +18,6 @@
       "guest": "ethrex",
       "guest_version": "v23.0.0",
       "total": 18149507431500.0,
-      "mean": 18149507431.5,
-      "per_gas": 603.3488360779398,
       "relative": 1.3261454656068352,
       "components": [
         7154852252792.0,
@@ -31,8 +29,6 @@
       "guest": "reth",
       "guest_version": "f804dc1",
       "total": 15566835888893.0,
-      "mean": 15566835888.893,
-      "per_gas": 517.492408564151,
       "relative": 1.1374352117166546,
       "components": [
         7174715293906.0,
@@ -44,8 +40,6 @@
       "guest": "zesu",
       "guest_version": "glamsterdam-devnet-7",
       "total": 13685909956488.0,
-      "mean": 13685909956.488,
-      "per_gas": 454.9642944349634,
       "relative": 1.0,
       "components": [
         6800580066424.0,

@@ -1,8 +1,8 @@
 {
   "zkvm": "zisk",
   "zkvm_version": "v1.0.0-alpha",
-  "generated_at": 1786133280,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31188281599",
+  "generated_at": 1786190822,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31243810334",
   "blocks": 1000,
   "kinds": [
     "base",
@@ -24,8 +24,6 @@
       "guest": "ethrex",
       "guest_version": "v23.0.0",
       "total": 43940105092723.0,
-      "mean": 43940105092.723,
-      "per_gas": 1460.7124388854947,
       "relative": 1.484996575111909,
       "components": [
         293601280000.0,
@@ -40,8 +38,6 @@
       "guest": "nethermind",
       "guest_version": "glamsterdam-devnet-7",
       "total": 54471345488821.0,
-      "mean": 54471345488.821,
-      "per_gas": 1810.8052256690517,
       "relative": 1.8409096046070452,
       "components": [
         293601280000.0,
@@ -56,8 +52,6 @@
       "guest": "reth",
       "guest_version": "f804dc1",
       "total": 35191683964537.0,
-      "mean": 35191683964.537,
-      "per_gas": 1169.8863806504564,
       "relative": 1.1893355750852068,
       "components": [
         293601280000.0,
@@ -72,8 +66,6 @@
       "guest": "zesu",
       "guest_version": "glamsterdam-devnet-7.2-2026-07-29",
       "total": 29589364601337.0,
-      "mean": 29589364601.337,
-      "per_gas": 983.6470085969161,
       "relative": 1.0,
       "components": [
         293601280000.0,

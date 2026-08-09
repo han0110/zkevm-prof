@@ -1,8 +1,8 @@
 {
   "zkvm": "sp1",
   "zkvm_version": "v6.3.1",
-  "generated_at": 1786182580,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31243810374",
+  "generated_at": 1786276865,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31303996968",
   "blocks": 1000,
   "kinds": [
     "opcode",
@@ -19,6 +19,7 @@
       "label": "ethrex-sp1",
       "guest": "ethrex",
       "guest_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-sp1-v6.3.1.elf",
       "total": 168995962037928.0,
       "relative": 1.1539942000100307,
       "components": [
@@ -31,6 +32,7 @@
       "label": "reth-sp1",
       "guest": "reth",
       "guest_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-sp1-v6.3.1.elf",
       "total": 146444377308360.0,
       "relative": 1.0,
       "components": [

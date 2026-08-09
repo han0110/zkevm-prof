@@ -1,8 +1,8 @@
 {
   "zkvm": "openvm",
   "zkvm_version": "v2.1.0-preview",
-  "generated_at": 1786173180,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31243810408",
+  "generated_at": 1786269165,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31303996973",
   "blocks": 1000,
   "kinds": [
     "precompile",
@@ -17,6 +17,7 @@
       "label": "ethrex-openvm",
       "guest": "ethrex",
       "guest_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-openvm-v2.1.0-preview.elf",
       "total": 18149507431500.0,
       "relative": 1.3261454656068352,
       "components": [
@@ -28,6 +29,7 @@
       "label": "reth-openvm",
       "guest": "reth",
       "guest_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",
       "total": 15566835888893.0,
       "relative": 1.1374352117166546,
       "components": [
@@ -39,6 +41,7 @@
       "label": "zesu-openvm",
       "guest": "zesu",
       "guest_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
       "total": 13685909956488.0,
       "relative": 1.0,
       "components": [

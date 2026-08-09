@@ -184,22 +184,30 @@ h1 {
   width: 100%;
 }
 
+/* A card too narrow to hold the table scrolls it sideways, which keeps the columns at the widths
+   they were sized to instead of compressing them into each other or letting them run past the
+   panel. */
+.scroller {
+  overflow-x: auto;
+}
+
 /* Columns are fixed so a tab carrying different names and row counts cannot reshape the table, and
-   sized to their own widest value or heading rather than to the card, which four short columns would
-   otherwise stretch across. Once the card is narrower than their sum the table shrinks with it. */
+   sized to their own widest value or heading rather than to the card, which five short columns would
+   otherwise stretch across. */
 #cost {
-  /* Pixel widths, carried unitless so each column can be stated as its share of their sum. An
-     absolute width would pin the columns open and leave the table overflowing a narrow card. */
-  --col-guest: 172;
-  --col-version: 104;
-  --col-total: 120;
-  --col-relative: 96;
-  --col-sum: calc(var(--col-guest) + var(--col-version) + var(--col-total) + var(--col-relative));
-  --cell-gap: 22px;
+  /* Pixel widths, carried unitless so each column can be stated as its share of their sum. */
+  --col-guest: 167;
+  --col-version: 92;
+  --col-total: 106;
+  --col-relative: 89;
+  --col-elf: 38;
+  --col-sum: calc(
+    var(--col-guest) + var(--col-version) + var(--col-total) + var(--col-relative) + var(--col-elf)
+  );
+  --cell-gap: 16px;
   --row-hover: rgb(48 37 27 / 0.4);
 
   width: calc(var(--col-sum) * 1px);
-  max-width: 100%;
   table-layout: fixed;
   border-collapse: collapse;
   font-size: 13px;
@@ -221,6 +229,10 @@ h1 {
   width: calc(var(--col-relative) / var(--col-sum) * 100%);
 }
 
+#cost th:nth-child(5) {
+  width: calc(var(--col-elf) / var(--col-sum) * 100%);
+}
+
 #cost th {
   padding: 6px var(--cell-gap);
   border-bottom: 1px solid var(--border);
@@ -239,6 +251,17 @@ h1 {
   font-variant-numeric: tabular-nums;
   text-align: right;
   white-space: nowrap;
+}
+
+/* Centred on the figures beside it, since the glyph carries no baseline of its own to sit on. */
+#cost td a {
+  display: inline-flex;
+  color: var(--faint);
+  vertical-align: middle;
+}
+
+#cost td a:hover {
+  color: var(--primary);
 }
 
 /* Only the guest name can outrun its column, and only once the table is shrinking. */
@@ -293,8 +316,8 @@ h1 {
   /* Stops at the table's own right edge, which a narrow card would otherwise let it run past and
      widen the page by, hovered or not. */
   max-width: calc(
-    (var(--col-version) + var(--col-total) + var(--col-relative)) / var(--col-version) * 100% -
-      var(--cell-gap)
+    (var(--col-version) + var(--col-total) + var(--col-relative) + var(--col-elf)) /
+      var(--col-version) * 100% - var(--cell-gap)
   );
   padding-right: 12px;
   overflow: hidden;

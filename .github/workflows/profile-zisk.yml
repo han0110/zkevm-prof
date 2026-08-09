@@ -17,4 +17,3 @@ jobs:
       contents: write
     with:
       zkvm: zisk
-      stateless-validators: '["ethrex", "nethermind", "reth", "zesu"]'

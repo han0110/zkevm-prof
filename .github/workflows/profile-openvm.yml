@@ -17,4 +17,3 @@ jobs:
       contents: write
     with:
       zkvm: openvm
-      stateless-validators: '["ethrex", "reth", "zesu"]'

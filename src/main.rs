@@ -5,6 +5,7 @@
 
 mod command;
 mod fixture;
+mod registry;
 mod zkvm;
 
 use anyhow::Result;

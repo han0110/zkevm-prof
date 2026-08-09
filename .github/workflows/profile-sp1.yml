@@ -17,4 +17,3 @@ jobs:
       contents: write
     with:
       zkvm: sp1
-      stateless-validators: '["ethrex", "reth"]'

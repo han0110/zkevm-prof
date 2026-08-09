@@ -7,10 +7,6 @@ on:
         description: zkVM to profile the guests on.
         required: true
         type: string
-      stateless-validators:
-        description: JSON array of the guests the zkVM has a published ELF for.
-        required: true
-        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -20,7 +16,24 @@ env:
   RVR_LD: lld
 
 jobs:
+  # The registry lists the guests each zkVM has a published ELF for, so the matrix is read from it
+  # rather than restated by every caller.
+  guests:
+    runs-on: ubuntu-latest
+    outputs:
+      stateless-validators: ${{ steps.registry.outputs.stateless-validators }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: registry
+        env:
+          ZKVM: ${{ inputs.zkvm }}
+        run: |
+          echo "stateless-validators=$(jq -c --arg zkvm "${ZKVM}" \
+            '.[$zkvm] | map(.["stateless-validator"])' elf-registry.json)" >> "${GITHUB_OUTPUT}"
+
   profile:
+    needs: guests
     name: ${{ matrix.stateless-validator }}-${{ inputs.zkvm }}
     runs-on: ubuntu-latest
     env:
@@ -31,7 +44,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        stateless-validator: ${{ fromJSON(inputs.stateless-validators) }}
+        stateless-validator: ${{ fromJSON(needs.guests.outputs.stateless-validators) }}
     steps:
       - uses: actions/checkout@v7
 

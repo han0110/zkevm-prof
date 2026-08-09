@@ -26,7 +26,7 @@ zkevm-prof profile \
 | Option | Values | Meaning |
 | --- | --- | --- |
 | `--zkvm` | `openvm`, `sp1`, `zisk` | zkVM the guest is profiled on. |
-| `--stateless-validator` | `ethrex`, `nethermind`, `reth`, `zesu` | Guest to profile. |
+| `--stateless-validator` | the guests `elf-registry.json` lists | Guest to profile. |
 | `--input` | path | Directory of EEST fixtures, walked recursively for `.json`. |
 | `--output` | path | Where the profile JSON is written. |
 | `--elf` | path | Guest ELF to profile, in place of the downloaded one. |
@@ -81,8 +81,9 @@ failed on some blocks does not appear cheaper for having skipped them. Every inp
 the same zkVM, since costs from different zkVMs are in different units.
 
 `json` carries the series in the units they were profiled in, along with the zkVM version, the block
-count and the time and workflow run that produced them. `md` renders the same figures as tables, from
-[`templates/report.md`](../templates/report.md), for pasting into a pull request.
+count, where each guest's ELF is published and the time and workflow run that produced them. `md`
+renders the same figures as tables, from [`templates/report.md`](../templates/report.md), for pasting
+into a pull request.
 
 The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
 `openvm.json` fills the OpenVM tab, `sp1.json` the SP1 tab and `zisk.json` the ZisK tab, and a tab
@@ -92,14 +93,32 @@ which makes a tab linkable.
 
 ## Guests
 
-Ethrex, Reth and Zesu guests are downloaded from [ere-guests][ere-guests] at the version
-`stateless-validator-catalog` is pinned to in `Cargo.toml`, which the build script reads so the
-download and the linked catalog cannot drift apart. A tag pin resolves to that release's assets, and
-a branch or revision pin to the build artifacts of the commit it locks to. The stateless input
-schema is versioned with the guests, so a corpus and a guest have to come from the same version or
-the guest rejects the input. Artifacts are named after the zkVM SDK that built them, and that SDK has
-to be the one this crate links, so moving to another version means bumping the ere-guests and
-`ere-catalog` pins together, since the catalog is what names the SDK version.
+[`elf-registry.json`](../elf-registry.json) lists, per zkVM, the stateless validators a guest ELF is
+published for. An entry naming a version and a URL is downloaded from that URL and known by that
+version, and an entry naming neither is downloaded from ere-guests and versioned by its catalog.
+Adding a guest is adding an entry, and the profile workflow reads its matrix from the same file.
+
+```json
+{
+    "zisk": [
+        { "stateless-validator": "ethrex" },
+        {
+            "stateless-validator": "nethermind",
+            "version": "glamsterdam-devnet-7",
+            "url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf"
+        }
+    ]
+}
+```
+
+Guests left to [ere-guests][ere-guests] are downloaded at the version `stateless-validator-catalog`
+is pinned to in `Cargo.toml`, which the build script reads so the download and the linked catalog
+cannot drift apart. A tag pin resolves to that release's assets, and a branch or revision pin to the
+build artifacts of the commit it locks to. The stateless input schema is versioned with the guests,
+so a corpus and a guest have to come from the same version or the guest rejects the input. Artifacts
+are named after the zkVM SDK that built them, and that SDK has to be the one this crate links, so
+moving to another version means bumping the ere-guests and `ere-catalog` pins together, since the
+catalog is what names the SDK version.
 
 The GitHub API serves build artifacts only to an authenticated caller, so a branch or revision pin
 needs `GITHUB_TOKEN` to hold a token. ere-guests is public, so any token is enough. Artifacts also
@@ -107,12 +126,15 @@ expire on the repository's retention window, after which the pin has to move, wh
 do not. Passing `--elf` bypasses the download entirely.
 
 Not every guest is built for every zkVM. ere-guests compiles Ethrex and Reth for each zkVM it
-supports, while Zesu is republished from a Consensys release and only for ZisK, so no Zesu guest
-exists on OpenVM or SP1. A caller of the profile workflow lists only the guests its zkVM has.
+supports and republishes Zesu from a Consensys release only for ZisK, so no Zesu guest exists on SP1
+and the registry lists none. Nethermind is outside the catalog for every zkVM, and ere-guests has no
+OpenVM Zesu build that runs, since the build it published predates the accelerators and traps on its
+first setup instruction. Both come from forks under the `glamsterdam-devnet-7` tag. A URL names the
+zkVM SDK its asset was built against, so republishing a fork against another SDK means updating the
+entry.
 
-Nethermind is outside the ere-guests catalog. Its guest is published from a fork under the
-`glamsterdam-devnet-7` tag, following the ere-guests asset naming so it resolves alike. Rebuilding it
-runs the recipe the Nethermind release workflow uses, from a Nethermind checkout.
+Rebuilding the Nethermind guest runs the recipe the Nethermind release workflow uses, from a
+Nethermind checkout.
 
 ```sh
 cd src/Nethermind/Nethermind.Stateless.ZiskGuest
@@ -196,8 +218,8 @@ segment.
 
 [`profile.yml`](../.github/workflows/profile.yml) is a reusable workflow that profiles a matrix of
 guests over a mainnet corpus, aggregates the results and publishes the page to GitHub Pages from
-`main`. It takes the zkVM and the guests it has a built ELF for as inputs, so adding a backend means
-adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml),
+`main`. It takes the zkVM as its only input and reads the guests from the registry, so adding a
+backend means adding one caller. [`profile-zisk.yml`](../.github/workflows/profile-zisk.yml),
 [`profile-openvm.yml`](../.github/workflows/profile-openvm.yml) and
 [`profile-sp1.yml`](../.github/workflows/profile-sp1.yml) are those callers. Every job that
 builds this crate first installs the LLVM toolchain rvr needs, since Ubuntu ships a clang older than

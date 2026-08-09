@@ -77,10 +77,14 @@ pub struct Meta {
     pub zkvm: zkVMKind,
     /// zkVM SDK the guest was built against, as the ere catalog names it.
     pub zkvm_version: String,
-    /// Guest the profile is of.
-    pub guest: String,
-    /// Version of that guest, as the ere-guests catalog records it.
-    pub guest_version: String,
+    /// Stateless validator the profile is of.
+    pub stateless_validator: String,
+    /// Version of that guest, as the registry resolves it.
+    pub stateless_validator_version: String,
+    /// Where the profiled ELF is published, absent when it was handed over directly or built as an
+    /// artifact the GitHub API serves under no stable URL.
+    #[serde(default)]
+    pub elf_url: Option<String>,
 }
 
 /// One profiled block.

@@ -1,0 +1,25 @@
+{
+    "openvm": [
+        { "stateless-validator": "ethrex" },
+        { "stateless-validator": "reth" },
+        {
+            "stateless-validator": "zesu",
+            "version": "glamsterdam-devnet-7",
+            "url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf"
+        }
+    ],
+    "sp1": [
+        { "stateless-validator": "ethrex" },
+        { "stateless-validator": "reth" }
+    ],
+    "zisk": [
+        { "stateless-validator": "ethrex" },
+        {
+            "stateless-validator": "nethermind",
+            "version": "glamsterdam-devnet-7",
+            "url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf"
+        },
+        { "stateless-validator": "reth" },
+        { "stateless-validator": "zesu" }
+    ]
+}

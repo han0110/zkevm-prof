@@ -1,11 +1,9 @@
 //! The `profile` command.
 //!
-//! Resolves the guest ELF, then runs it over a fixture corpus on the chosen zkVM. Guests built by
-//! ere-guests are fetched at the version this crate pins the catalog to; Nethermind is not part of
-//! that catalog, so its guest is published from a Nethermind fork and fetched from there instead.
+//! Resolves the guest ELF through the registry, then runs it over a fixture corpus on the chosen
+//! zkVM.
 
 use std::{
-    env,
     fs::{self, File},
     io::{BufWriter, Write, stderr},
     os::fd::AsFd,
@@ -15,138 +13,19 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Context, Result, bail};
 use clap::{
-    Parser, ValueEnum,
+    Parser,
     builder::{PossibleValuesParser, TypedValueParser},
 };
 use ere_catalog::zkVMKind;
 use gag::Gag;
 use rayon::prelude::*;
-use stateless_validator_catalog::StatelessValidatorKind;
-use stateless_validator_downloader::Downloader;
 
 use crate::{
-    fixture,
+    fixture, registry,
     zkvm::{Cost, Entry, Meta, Profile, Profiler, profiler},
 };
-
-/// ere-guests release the profiled guests are published in, absent unless the pin carries a tag.
-///
-/// The build script fills this and the commit below from the Cargo pin of the catalog this crate
-/// links, so the guests and the catalog naming their version come from the same ere-guests build.
-const ERE_GUESTS_TAG: Option<&str> = option_env!("ERE_GUESTS_TAG");
-
-/// ere-guests commit the profiled guests are built by.
-const ERE_GUESTS_COMMIT: &str = env!("ERE_GUESTS_COMMIT");
-
-/// Environment variable holding the token the artifact download authenticates with.
-///
-/// The GitHub artifact API rejects anonymous reads, so unlike a release asset an artifact cannot be
-/// fetched without a token.
-const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
-
-/// Release a guest the ere-guests catalog cannot supply is fetched from, which is also the version
-/// it is known by.
-///
-/// A fork names its assets the way ere-guests does, so a fork-released guest and a catalog one
-/// resolve alike.
-const FORK_TAG: &str = "glamsterdam-devnet-7";
-
-/// Repository a guest the ere-guests catalog cannot supply is published from.
-///
-/// Nethermind is absent from the catalog for every zkVM, so its guest is published from a fork
-/// built by the same `make build` recipe the Nethermind release workflow runs. The catalog's zesu
-/// guest is an OpenVM build from before its accelerators were implemented and traps on its first
-/// setup instruction, so that one pair comes from a fork until the catalog carries a build that
-/// runs.
-fn fork(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Option<&'static str> {
-    match (stateless_validator, zkvm) {
-        (StatelessValidator::Nethermind, _) => Some("han0110/nethermind"),
-        (StatelessValidator::Zesu, zkVMKind::OpenVM) => Some("han0110/zesu-zkvm"),
-        _ => None,
-    }
-}
-
-/// Stateless validator whose guest is profiled.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
-#[value(rename_all = "lowercase")]
-pub enum StatelessValidator {
-    Ethrex,
-    Nethermind,
-    Reth,
-    Zesu,
-}
-
-impl StatelessValidator {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Ethrex => "ethrex",
-            Self::Nethermind => "nethermind",
-            Self::Reth => "reth",
-            Self::Zesu => "zesu",
-        }
-    }
-
-    /// Version of the guest, which the report shows beside its cost.
-    ///
-    /// A guest taken from a fork is versioned by that release rather than by a catalog entry, since
-    /// the catalog entry names a build the profile is not of.
-    pub fn version(self, zkvm: zkVMKind) -> &'static str {
-        match fork(self, zkvm) {
-            Some(_) => FORK_TAG,
-            None => StatelessValidatorKind::try_from(self)
-                .expect("a guest the catalog lacks is published from a fork")
-                .version(),
-        }
-    }
-}
-
-impl TryFrom<StatelessValidator> for StatelessValidatorKind {
-    type Error = anyhow::Error;
-
-    fn try_from(validator: StatelessValidator) -> Result<Self> {
-        match validator {
-            StatelessValidator::Ethrex => Ok(Self::Ethrex),
-            StatelessValidator::Reth => Ok(Self::Reth),
-            StatelessValidator::Zesu => Ok(Self::Zesu),
-            StatelessValidator::Nethermind => Err(anyhow!(
-                "{} is not in the ere-guests catalog",
-                validator.as_str()
-            )),
-        }
-    }
-}
-
-/// Returns the ELF of `stateless_validator` compiled for `zkvm`.
-pub async fn elf(stateless_validator: StatelessValidator, zkvm: zkVMKind) -> Result<Vec<u8>> {
-    match fork(stateless_validator, zkvm) {
-        Some(repository) => {
-            download(&format!(
-                "https://github.com/{repository}/releases/download/{FORK_TAG}\
-                 /stateless-validator-{}-{zkvm}-{}.elf",
-                stateless_validator.as_str(),
-                zkvm.sdk_version()
-            ))
-            .await
-        }
-        None => {
-            let downloader = match ERE_GUESTS_TAG {
-                Some(tag) => Downloader::from_tag(tag).await?,
-                None => {
-                    let github_token = env::var(GITHUB_TOKEN).with_context(|| {
-                        format!("{GITHUB_TOKEN} must hold a token that can read ere-guests build artifacts")
-                    })?;
-                    Downloader::from_commit(ERE_GUESTS_COMMIT, &github_token).await?
-                }
-            };
-            Ok(downloader
-                .download(stateless_validator.try_into()?, zkvm)
-                .await?
-                .elf)
-        }
-    }
-}
 
 /// Profiles one block, turning a panic inside the backend into an error.
 ///
@@ -166,15 +45,6 @@ fn profile_block(profiler: &dyn Profiler, stateless_input: &[u8]) -> Result<Cost
             bail!("{}", message.trim())
         }
     }
-}
-
-async fn download(url: &str) -> Result<Vec<u8>> {
-    let response = reqwest::get(url)
-        .await
-        .with_context(|| format!("failed to request {url}"))?;
-    let status = response.status();
-    ensure!(status.is_success(), "{url} returned {status}");
-    Ok(response.bytes().await?.to_vec())
 }
 
 /// Profiles one guest on one zkVM over a fixture corpus.
@@ -197,8 +67,8 @@ pub struct ProfileCmd {
     zkvm: zkVMKind,
 
     /// Stateless validator whose guest is profiled.
-    #[arg(long, value_enum)]
-    stateless_validator: StatelessValidator,
+    #[arg(long, value_parser = PossibleValuesParser::new(registry::stateless_validators()))]
+    stateless_validator: String,
 
     /// Directory of EEST fixtures, walked recursively for `.json` files.
     #[arg(long)]
@@ -218,17 +88,23 @@ pub struct ProfileCmd {
 
 impl ProfileCmd {
     pub async fn run(self) -> Result<()> {
+        // Resolved before the run rather than beside the profile it labels, so a guest the registry
+        // does not list fails now instead of after the whole corpus has been profiled.
+        let stateless_validator_version = registry::version(self.zkvm, &self.stateless_validator)?;
+        let elf_url = match &self.elf {
+            Some(_) => None,
+            None => registry::url(self.zkvm, &self.stateless_validator)?,
+        };
         let elf = match &self.elf {
             Some(path) => {
                 fs::read(path).with_context(|| format!("failed to read {}", path.display()))?
             }
-            None => elf(self.stateless_validator, self.zkvm)
+            None => registry::elf(self.zkvm, &self.stateless_validator)
                 .await
                 .with_context(|| {
                     format!(
                         "failed to resolve the {} guest for {}",
-                        self.stateless_validator.as_str(),
-                        self.zkvm
+                        self.stateless_validator, self.zkvm
                     )
                 })?,
         };
@@ -237,7 +113,7 @@ impl ProfileCmd {
         let paths = fixture::find(&self.input)?;
         eprintln!(
             "profiling {} on {} over {} fixtures",
-            self.stateless_validator.as_str(),
+            self.stateless_validator,
             self.zkvm,
             paths.len()
         );
@@ -305,8 +181,9 @@ impl ProfileCmd {
             meta: Meta {
                 zkvm: self.zkvm,
                 zkvm_version: self.zkvm.sdk_version().to_owned(),
-                guest: self.stateless_validator.as_str().to_owned(),
-                guest_version: self.stateless_validator.version(self.zkvm).to_owned(),
+                stateless_validator: self.stateless_validator,
+                stateless_validator_version: stateless_validator_version.to_owned(),
+                elf_url,
             },
         };
         let file = File::create(&self.output)

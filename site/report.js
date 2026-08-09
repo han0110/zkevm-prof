@@ -203,7 +203,7 @@ function renderRun(data) {
     ['Profiled', profiled],
     ['zkVM', data.zkvm],
     ['zkVM version', data.zkvm_version],
-    ['Guests', String(data.guests.length)],
+    ['Stateless validators', String(data.guests.length)],
     ['Blocks', String(data.blocks)],
   ];
   document.getElementById('run').innerHTML = fields
@@ -222,6 +222,29 @@ function versionCell(version) {
   return '<td aria-label="' + version + '">' + version.slice(0, VERSION_LIMIT) + '\u2026</td>';
 }
 
+/* Drawn rather than lettered, so the cell carries nothing a sort or a screen reader would read as a
+   value of the column. */
+const EXTERNAL_LINK =
+  '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"' +
+  ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M15 3h6v6"/><path d="M10 14 21 3"/>' +
+  '<path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6"/></svg>';
+
+/* A guest profiled from a local ELF, or from a build artifact the GitHub API serves under no stable
+   URL, has nothing to point at and leaves the cell empty. */
+function elfCell(guest) {
+  if (!guest.elf_url) return '<td></td>';
+  return (
+    '<td><a href="' +
+    guest.elf_url +
+    '" aria-label="ELF of ' +
+    guest.label +
+    '">' +
+    EXTERNAL_LINK +
+    '</a></td>'
+  );
+}
+
 function renderTable(data) {
   const body = document.getElementById('cost').tBodies[0];
   body.innerHTML = data.guests
@@ -234,7 +257,9 @@ function renderTable(data) {
       si(guest.total) +
       '</td><td>' +
       guest.relative.toFixed(2) +
-      'x</td></tr>'
+      'x</td>' +
+      elfCell(guest) +
+      '</tr>'
     )
     .join('');
   sortable(document.getElementById('cost'));

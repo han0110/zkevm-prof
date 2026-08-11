@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1"
 askama = "0.16"
 clap = { version = "4", features = ["derive"] }
+elf = "0.7"
 gag = "1"
 hex = "0.4"
 rayon = "1"

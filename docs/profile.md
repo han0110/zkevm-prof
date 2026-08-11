@@ -36,13 +36,16 @@ written to exercise and the ones before it only build the state it runs against.
 several tests contributes one entry per test.
 
 The output pairs the per-test costs with the zkVM that produced them, which is how the report knows
-what a cost map's kinds mean.
+what a cost map's kinds mean. An entry also carries `peak_heap_bytes` for a guest whose registry
+entry declares where it keeps its heap, and omits the field for one that declares none rather than
+recording a heap of nothing.
 
 ```json
 {
   "profile": {
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
       "cost": { "base": 293601280, "main": 25355756224, "total": 42895927337 },
+      "peak_heap_bytes": 57531938,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
   },
@@ -81,9 +84,11 @@ failed on some blocks does not appear cheaper for having skipped them. Every inp
 the same zkVM, since costs from different zkVMs are in different units.
 
 `json` carries the series in the units they were profiled in, along with the zkVM version, the block
-count, where each guest's ELF is published and the time and workflow run that produced them. `md`
-renders the same figures as tables, from [`templates/report.md`](../templates/report.md), for pasting
-into a pull request.
+count, where each guest's ELF is published and the time and workflow run that produced them. Peak
+heap is carried the same way in `heap_lines`, holding only the guests whose profiles recorded it, so
+a report whose guests recorded none leaves that section off the page. `md` renders the costs as
+tables, from [`templates/report.md`](../templates/report.md), for pasting into a pull request, and
+leaves peak heap to the page.
 
 The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
 `openvm.json` fills the OpenVM tab, `sp1.json` the SP1 tab and `zisk.json` the ZisK tab, and a tab
@@ -101,7 +106,13 @@ Adding a guest is adding an entry, and the profile workflow reads its matrix fro
 ```json
 {
     "zisk": [
-        { "stateless-validator": "ethrex" },
+        {
+            "stateless-validator": "ethrex",
+            "heap": {
+                "cursor": "ZISK_BUMP_HEAP_POS",
+                "base": "_kernel_heap_bottom"
+            }
+        },
         {
             "stateless-validator": "nethermind",
             "version": "glamsterdam-devnet-7",
@@ -110,6 +121,20 @@ Adding a guest is adding an entry, and the profile workflow reads its matrix fro
     ]
 }
 ```
+
+`heap` names the two symbols of that guest's own ELF that locate the heap it allocates from. `cursor`
+holds the next free heap address and `base` marks where the heap starts, so the peak is the one less
+the other. Both are matched exactly and a declared symbol the ELF does not carry fails the run, since
+a guest quietly missing from the heap chart reads as one that allocates nothing. An entry declaring
+no `heap` records no peak, which is how the SP1 guests are listed, and a guest that carries the
+symbols but allocates through something else leaves the cursor where it started and likewise records
+none.
+
+The symbols belong to the artifact rather than to the zkVM. A Rust guest keeps the cursor in a
+function local, so it reaches the ELF under a v0 mangled name carrying a crate disambiguator that
+differs from build to build, which is why two guests on the same runtime name it differently. A
+published ELF gives up both names to `readelf -sW`, and rebuilding a guest means refreshing its
+entry.
 
 Guests left to [ere-guests][ere-guests] are downloaded at the version `stateless-validator-catalog`
 is pinned to in `Cargo.toml`, which the build script reads so the download and the linked catalog

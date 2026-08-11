@@ -27,6 +27,8 @@ use crate::zkvm::{self, Composition, Entry, Profile};
 struct Block {
     total: f64,
     components: Vec<f64>,
+    /// Absent for a guest whose backend cannot read the heap it used.
+    peak_heap_bytes: Option<f64>,
     gas_used: u64,
     number: u64,
 }
@@ -215,6 +217,7 @@ fn build_series(
         blocks.push(Block {
             total,
             components,
+            peak_heap_bytes: entry.peak_heap_bytes.map(|peak| peak as f64),
             gas_used: entry.metadata.gas_used,
             number: entry.metadata.block_number,
         });
@@ -250,7 +253,10 @@ struct Report {
     /// What each kind covers, in the order the kinds are listed.
     notes: Vec<String>,
     guests: Vec<ReportGuest>,
-    lines: Vec<ReportLine>,
+    cost_lines: Vec<ReportLine>,
+    /// Peak heap per block, carrying only the guests whose backend can read it. Empty drops the
+    /// section from the page, as an empty composition drops the composition chart.
+    heap_lines: Vec<ReportLine>,
 }
 
 #[derive(Serialize)]
@@ -267,7 +273,7 @@ struct ReportGuest {
 #[derive(Serialize)]
 struct ReportLine {
     label: String,
-    /// `(gas, cost, block number)`, the third value carried for the tooltip.
+    /// `(gas, value, block number)`, the third value carried for the tooltip.
     points: Vec<(f64, f64, u64)>,
 }
 
@@ -314,13 +320,14 @@ impl Report {
                     components: guest.components.clone(),
                 })
                 .collect(),
-            lines: series.iter().map(line).collect(),
+            cost_lines: series.iter().map(cost_line).collect(),
+            heap_lines: series.iter().filter_map(heap_line).collect(),
         }
     }
 }
 
 /// Every profiled block as a `(gas, cost, number)` point, ordered along the gas axis.
-fn line(series: &Series) -> ReportLine {
+fn cost_line(series: &Series) -> ReportLine {
     let mut blocks: Vec<&Block> = series.blocks.iter().collect();
     blocks.sort_by_key(|block| block.gas_used);
     ReportLine {
@@ -330,6 +337,20 @@ fn line(series: &Series) -> ReportLine {
             .map(|block| (block.gas_used as f64, block.total, block.number))
             .collect(),
     }
+}
+
+/// The same for peak heap, or nothing when no block in the series carries one.
+fn heap_line(series: &Series) -> Option<ReportLine> {
+    let mut blocks: Vec<&Block> = series.blocks.iter().collect();
+    blocks.sort_by_key(|block| block.gas_used);
+    let points: Vec<(f64, f64, u64)> = blocks
+        .iter()
+        .filter_map(|block| Some((block.gas_used as f64, block.peak_heap_bytes?, block.number)))
+        .collect();
+    (!points.is_empty()).then(|| ReportLine {
+        label: series.label.clone(),
+        points,
+    })
 }
 
 /// The same figures as the page, formatted for the markdown tables.

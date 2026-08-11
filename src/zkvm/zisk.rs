@@ -4,13 +4,19 @@
 //! emulator accumulates while it runs. Enabling `EmuOptions::stats` is what the `ziskemu -X` flag
 //! sets, and the resulting distribution is read back from the emulator in process rather than by
 //! shelling out.
+//!
+//! Peak heap comes out of the same run. The emulator keeps the whole guest RAM until it is dropped,
+//! so the word the registry names is still there to read once the run is over.
 
 use anyhow::{Result, anyhow, bail, ensure};
 use zisk_common::EmuTrace;
-use zisk_core::{Riscv2zisk, ZiskRom};
+use zisk_core::{RAM_ADDR, RAM_SIZE, Riscv2zisk, ZiskRom};
 use ziskemu::{Emu, EmuOptions};
 
-use crate::zkvm::{Composition, Cost, Kind, Profiler};
+use crate::{
+    registry::HeapSymbols,
+    zkvm::{Composition, Cost, Execution, HeapCursor, Kind, Profiler},
+};
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
 ///
@@ -54,19 +60,29 @@ fn kinds() -> impl Iterator<Item = &'static str> {
 
 pub struct ZiskProfiler {
     rom: ZiskRom,
+    /// Absent when the registry declares no heap for the guest.
+    heap: Option<HeapCursor>,
 }
 
 impl ZiskProfiler {
-    pub fn new(elf: &[u8]) -> Result<Self> {
+    pub fn new(elf: &[u8], heap: Option<&HeapSymbols>) -> Result<Self> {
         let rom = Riscv2zisk::new(elf)
             .run()
             .map_err(|error| anyhow!("failed to transpile the ELF into a ZisK ROM: {error}"))?;
-        Ok(Self { rom })
+        let heap = heap
+            .map(|symbols| HeapCursor::resolve(elf, symbols))
+            .transpose()?;
+        // `Mem::read` panics rather than failing on an address it holds no section for, so the RAM
+        // section bounds what the emulator can be asked for.
+        if let Some(heap) = &heap {
+            heap.ensure_readable(RAM_ADDR..RAM_ADDR + RAM_SIZE)?;
+        }
+        Ok(Self { rom, heap })
     }
 }
 
 impl Profiler for ZiskProfiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Cost> {
+    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
         let options = EmuOptions {
             stats: true,
             ..Default::default()
@@ -82,7 +98,19 @@ impl Profiler for ZiskProfiler {
             bail!("emulation did not reach the end of the program");
         }
         emu.ctx.stats.set_use_thousands_sep(false);
-        parse(&emu.ctx.stats.report(&self.rom))
+        let cost = parse(&emu.ctx.stats.report(&self.rom))?;
+        let peak_heap_bytes = self.heap.as_ref().and_then(|heap| {
+            heap.peak(
+                emu.ctx
+                    .inst_ctx
+                    .mem
+                    .read(heap.cursor, size_of::<u64>() as u64),
+            )
+        });
+        Ok(Execution {
+            cost,
+            peak_heap_bytes,
+        })
     }
 }
 

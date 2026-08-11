@@ -1,11 +1,27 @@
 {
     "openvm": [
-        { "stateless-validator": "ethrex" },
-        { "stateless-validator": "reth" },
+        {
+            "stateless-validator": "ethrex",
+            "heap": {
+                "cursor": "_RNvNvNtCscSJU6Xa4KOq_15openvm_platform6memory17sys_alloc_aligned8HEAP_POS.0",
+                "base": "_end"
+            }
+        },
+        {
+            "stateless-validator": "reth",
+            "heap": {
+                "cursor": "_RNvNvNtCsc30BbITnbgX_15openvm_platform6memory17sys_alloc_aligned8HEAP_POS.0",
+                "base": "_end"
+            }
+        },
         {
             "stateless-validator": "zesu",
             "version": "glamsterdam-devnet-7",
-            "url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf"
+            "url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
+            "heap": {
+                "cursor": "ZKVM_HEAP_POS",
+                "base": "_end"
+            }
         }
     ],
     "sp1": [
@@ -13,13 +29,35 @@
         { "stateless-validator": "reth" }
     ],
     "zisk": [
-        { "stateless-validator": "ethrex" },
+        {
+            "stateless-validator": "ethrex",
+            "heap": {
+                "cursor": "ZISK_BUMP_HEAP_POS",
+                "base": "_kernel_heap_bottom"
+            }
+        },
         {
             "stateless-validator": "nethermind",
             "version": "glamsterdam-devnet-7",
-            "url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf"
+            "url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf",
+            "heap": {
+                "cursor": "ZISK_BUMP_HEAP_POS",
+                "base": "_kernel_heap_bottom"
+            }
         },
-        { "stateless-validator": "reth" },
-        { "stateless-validator": "zesu" }
+        {
+            "stateless-validator": "reth",
+            "heap": {
+                "cursor": "ZISK_BUMP_HEAP_POS",
+                "base": "_kernel_heap_bottom"
+            }
+        },
+        {
+            "stateless-validator": "zesu",
+            "heap": {
+                "cursor": "ZISK_BUMP_HEAP_POS",
+                "base": "_kernel_heap_bottom"
+            }
+        }
     ]
 }

@@ -39,6 +39,15 @@ function si(value) {
   return value.toFixed(0);
 }
 
+/* Peak heap is a memory figure, which reads in binary units while a cost reads in decimal ones. */
+function bytes(value) {
+  const steps = [[1024 ** 3, 'GiB'], [1024 ** 2, 'MiB'], [1024, 'KiB']];
+  for (const step of steps) {
+    if (Math.abs(value) >= step[0]) return (value / step[0]).toFixed(2) + ' ' + step[1];
+  }
+  return value.toFixed(0) + ' B';
+}
+
 function contrastText(hex) {
   const channel = (offset) => {
     const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
@@ -55,6 +64,13 @@ function niceMax(value) {
   if (!(value > 0)) return 1;
   const step = Math.pow(10, Math.floor(Math.log10(value))) / 2;
   return Math.ceil(value / step) * step;
+}
+
+/* The binary counterpart, so a heap axis lands on round KiB, MiB or GiB rather than on the decimal
+   ceiling its labels would then print as arbitrary fractions. */
+function niceBytes(value) {
+  const unit = [1024 ** 3, 1024 ** 2, 1024, 1].find((step) => value >= step) ?? 1;
+  return niceMax(value / unit) * unit;
 }
 
 /* Cells carry their own padding because the page stylesheet does not reach into a tooltip. */
@@ -404,12 +420,16 @@ function renderComposition(data) {
   return chart;
 }
 
-function renderGas(data) {
-  const points = data.lines.reduce((all, line) => all.concat(line.points), []);
-  const ceiling = niceMax(Math.max.apply(null, points.map((point) => point[1])));
+/* Cost and peak heap are both one value per block against the gas that block used, so one chart
+   draws either, differing only in what `format` prints the value as. Colour is keyed on `order`
+   rather than on the row, since a guest missing from one chart would otherwise shift every guest
+   below it onto another guest's colour. */
+function renderLines(id, lines, scale, order) {
+  const points = lines.reduce((all, line) => all.concat(line.points), []);
+  const ceiling = scale.ceiling(Math.max.apply(null, points.map((point) => point[1])));
 
   /*
-   * The cost axis is pinned to the whole corpus and animation is off, so hiding a guest or zooming
+   * The value axis is pinned to the whole corpus and animation is off, so hiding a guest or zooming
    * never rescales or slides what is left. The gas axis stays unpinned because dataZoom drives it.
    */
   const option = {
@@ -428,7 +448,10 @@ function renderGas(data) {
       type: 'value',
       min: 0,
       max: ceiling,
-      axisLabel: { ...AXIS.axisLabel, formatter: si },
+      // Left to itself the axis splits a binary ceiling at decimal marks, which the byte formatter
+      // then prints as fractions. Splitting it evenly keeps the marks in the ceiling's own unit.
+      interval: scale.splits && ceiling / scale.splits,
+      axisLabel: { ...AXIS.axisLabel, formatter: scale.format },
     },
     // filterMode none keeps the points outside the window, so a line still draws across both edges.
     dataZoom: [
@@ -468,38 +491,73 @@ function renderGas(data) {
       trigger: 'axis',
       formatter: (params) => {
         const head = 'Block #' + params[0].value[2] + ' - ' + si(params[0].value[0]) + ' gas';
-        const rows = params.map((point) => [point.marker + point.seriesName, si(point.value[1])]);
+        const rows = params.map((point) => [
+          point.marker + point.seriesName,
+          scale.format(point.value[1]),
+        ]);
         return tooltipTable(head, rows);
       },
     },
     // A point per block, so markers stay hidden until the axis pointer picks one out.
-    series: data.lines.map((line, index) => ({
-      name: line.label,
-      type: 'line',
-      symbol: 'circle',
-      symbolSize: 8,
-      showSymbol: false,
-      lineStyle: { width: 2, color: at(LINE_COLORS, index) },
-      itemStyle: { color: at(LINE_COLORS, index), borderColor: THEME.surface, borderWidth: 2 },
-      data: line.points,
-    })),
+    series: lines.map((line) => {
+      const color = at(LINE_COLORS, order.indexOf(line.label));
+      return {
+        name: line.label,
+        type: 'line',
+        symbol: 'circle',
+        symbolSize: 8,
+        showSymbol: false,
+        lineStyle: { width: 2, color },
+        itemStyle: { color, borderColor: THEME.surface, borderWidth: 2 },
+        data: line.points,
+      };
+    }),
   };
 
-  const chart = mount('gas', option, 420);
-  isolatingLegend(chart, data.lines.map((line) => line.label), () => {});
+  const chart = mount(id, option, 420);
+  isolatingLegend(chart, lines.map((line) => line.label), () => {});
   return chart;
+}
+
+/* How a chart prints its values, where it rounds its axis up to, and how many marks it splits into
+   when the default split would not land on round labels. */
+const COST_SCALE = { format: si, ceiling: niceMax };
+const HEAP_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
+
+/* Guest order the colours are keyed on, shared by both line charts. */
+const guestOrder = (data) => data.guests.map((guest) => guest.label);
+
+function renderGas(data) {
+  return renderLines('gas', data.cost_lines, COST_SCALE, guestOrder(data));
+}
+
+/* A report written before peak heap was recorded, or one whose zkVM cannot read it, carries no heap
+   line and the page drops the section rather than drawing an empty chart. */
+function renderHeap(data) {
+  const lines = data.heap_lines ?? [];
+  const card = document.getElementById('heap-card');
+  if (!lines.length) {
+    card.classList.add('hidden');
+    return null;
+  }
+  card.classList.remove('hidden');
+  return renderLines('heap', lines, HEAP_SCALE, guestOrder(data));
 }
 
 function render(data) {
   clearCharts();
   renderRun(data);
   renderTable(data);
-  charts = [renderComposition(data), renderGas(data)].filter(Boolean);
+  // Collected as they are built, so a chart that throws still leaves the earlier ones disposable.
+  [renderComposition, renderGas, renderHeap].forEach((draw) => {
+    const chart = draw(data);
+    if (chart) charts.push(chart);
+  });
 }
 
 function showError(message) {
   clearCharts();
-  ['run-card', 'cost-card', 'composition-card', 'gas-card'].forEach((id) => {
+  ['run-card', 'cost-card', 'composition-card', 'gas-card', 'heap-card'].forEach((id) => {
     document.getElementById(id).classList.add('hidden');
   });
   const error = document.getElementById('error');

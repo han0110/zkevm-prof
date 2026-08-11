@@ -59,6 +59,22 @@ struct Elf {
     version: Option<String>,
     /// Release asset the ELF is downloaded from, absent when ere-guests builds it.
     url: Option<String>,
+    /// Where the guest keeps its heap, absent when its allocator exposes no cursor to read.
+    heap: Option<HeapSymbols>,
+}
+
+/// Symbols locating the heap a guest allocates from.
+///
+/// Both name a symbol of that guest's own ELF, so they are properties of the artifact rather than of
+/// the zkVM. The mangled name a Rust guest keeps its cursor under carries a crate disambiguator that
+/// differs from build to build, which is why even two guests on the same runtime name it differently.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeapSymbols {
+    /// Symbol holding the allocator's cursor, whose value after a run is its high-water mark.
+    pub cursor: String,
+    /// Symbol marking the address the heap starts at, which the cursor is measured from.
+    pub base: String,
 }
 
 impl Elf {
@@ -111,6 +127,15 @@ pub fn url(zkvm: zkVMKind, stateless_validator: &str) -> Result<Option<String>> 
             )
         })),
     }
+}
+
+/// Returns where the `stateless_validator` guest for `zkvm` keeps its heap, absent when the entry
+/// declares none, which is how a guest comes to record no peak heap.
+pub fn heap_symbols(
+    zkvm: zkVMKind,
+    stateless_validator: &str,
+) -> Result<Option<&'static HeapSymbols>> {
+    Ok(find(zkvm, stateless_validator)?.heap.as_ref())
 }
 
 /// Returns the ELF of the `stateless_validator` guest for `zkvm`.

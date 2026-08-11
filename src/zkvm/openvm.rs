@@ -9,19 +9,26 @@
 //! kind against an artifact priced with only that kind's AIR widths. Metered cost is a weighted sum
 //! over the AIRs an execution charges and the weights are the caller's, so zeroing the rest leaves
 //! exactly the cells one kind contributes.
+//!
+//! Peak heap comes out of the same runs. Metered cost stubs the memory model out of the pricing but
+//! still runs the guest against real memory, so the state a run returns holds the word the registry
+//! names.
 
 use anyhow::{Result, anyhow, ensure};
 use openvm_sdk::{
     Sdk, StdIn,
     compiled::MeteredCostInstance,
     config::{AggregationSystemParams, AppConfig},
-    openvm_circuit::arch::execution_mode::MeteredCostCtx,
+    openvm_circuit::arch::{execution_mode::MeteredCostCtx, instructions::riscv::RV64_MEMORY_AS},
 };
 use openvm_sdk_config::SdkVmConfig;
 use openvm_stark_sdk::config::{MAX_APP_LOG_STACKED_HEIGHT, app_params_with_100_bits_security};
 use openvm_transpiler::{elf::Elf, openvm_platform::memory::MEM_SIZE};
 
-use crate::zkvm::{Composition, Cost, Kind, Profiler};
+use crate::{
+    registry::HeapSymbols,
+    zkvm::{Composition, Cost, Execution, HeapCursor, Kind, Profiler},
+};
 
 /// Cost kinds that partition an OpenVM total, in stack order, and the kind holding the whole.
 ///
@@ -90,10 +97,20 @@ pub struct OpenVMProfiler {
     /// Shared across the artifacts, since each carries its own widths and the context only collects
     /// what a run accumulated.
     ctx: MeteredCostCtx,
+    /// Absent when the registry declares no heap for the guest.
+    heap: Option<HeapCursor>,
 }
 
 impl OpenVMProfiler {
-    pub fn new(elf: &[u8]) -> Result<Self> {
+    pub fn new(elf: &[u8], heap: Option<&HeapSymbols>) -> Result<Self> {
+        // Resolved before the ELF is decoded, since decoding keeps the memory image and drops the
+        // symbol table the declared names are looked up in.
+        let heap = heap
+            .map(|symbols| HeapCursor::resolve(elf, symbols))
+            .transpose()?;
+        if let Some(heap) = &heap {
+            heap.ensure_readable(0..MEM_SIZE as u64)?;
+        }
         let elf = Elf::decode(elf, MEM_SIZE as u32)
             .map_err(|error| anyhow!("failed to decode the guest ELF: {error}"))?;
         // The SDK holds a transpiler behind `Rc`, so it cannot be shared across threads and cannot
@@ -156,33 +173,58 @@ impl OpenVMProfiler {
             .collect::<Result<Vec<_>>>()?;
         let whole = compile(COMPOSITION.total, &ctx.widths)?;
 
-        Ok(Self { whole, priced, ctx })
+        Ok(Self {
+            whole,
+            priced,
+            ctx,
+            heap,
+        })
     }
 
-    fn execute(&self, instance: &MeteredCostInstance<'static>, stdin: &StdIn) -> Result<u64> {
+    /// Runs `instance`, returning its cost and the peak heap the run left behind.
+    fn execute(
+        &self,
+        instance: &MeteredCostInstance<'static>,
+        stdin: &StdIn,
+    ) -> Result<(u64, Option<u64>)> {
         // `Sdk::execute_metered_cost` wraps this call to also read the guest's public values, which
         // a cost profile does not report. Going through the artifact keeps the SDK off the worker
         // threads, since only the artifact is shareable.
-        let (ctx, _) = instance
+        let (ctx, state) = instance
             .execute_metered_cost(stdin.clone(), self.ctx.clone())
             .map_err(|error| anyhow!("metered cost execution failed: {error}"))?;
-        Ok(ctx.cost)
+        // The compiled artifact runs against the state's own buffer, so the memory it hands back is
+        // the one the guest wrote and a guest byte address is a byte offset into the RISC-V address
+        // space.
+        let peak_heap_bytes = match &self.heap {
+            Some(heap) => {
+                let word = state
+                    .memory
+                    .checked_u8_slice(RV64_MEMORY_AS, heap.cursor, size_of::<u64>() as u64)
+                    .map_err(|error| anyhow!("failed to read the guest's heap cursor: {error}"))?;
+                heap.peak(u64::from_le_bytes(
+                    word.try_into().expect("the slice is eight bytes"),
+                ))
+            }
+            None => None,
+        };
+        Ok((ctx.cost, peak_heap_bytes))
     }
 }
 
 impl Profiler for OpenVMProfiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Cost> {
+    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
         let mut stdin = StdIn::default();
         stdin.write_bytes(stateless_input);
 
         let mut cost = Cost::new();
         for (kind, instance) in &self.priced {
-            cost.insert((*kind).to_owned(), self.execute(instance, &stdin)?);
+            cost.insert((*kind).to_owned(), self.execute(instance, &stdin)?.0);
         }
 
         // The kinds leave out the AIRs no instruction can charge, so kinds that fall short of the
         // whole cost mean one of them took a row after all.
-        let total = self.execute(&self.whole, &stdin)?;
+        let (total, peak_heap_bytes) = self.execute(&self.whole, &stdin)?;
         let summed: u64 = cost.values().sum();
         ensure!(
             summed == total,
@@ -191,7 +233,10 @@ impl Profiler for OpenVMProfiler {
         );
         cost.insert(COMPOSITION.total.to_owned(), total);
 
-        Ok(cost)
+        Ok(Execution {
+            cost,
+            peak_heap_bytes,
+        })
     }
 }
 

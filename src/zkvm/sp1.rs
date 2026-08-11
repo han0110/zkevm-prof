@@ -7,6 +7,11 @@
 //!
 //! The sum splits by the accumulators SP1 charges through rather than by the two weightings, since
 //! every AIR carries both weightings and only the accumulators track what the program did.
+//!
+//! Peak heap comes out of the same run. The executor keeps the memory it ran the guest against and
+//! serves any word of it by address, so the word the registry names is still there once the run is
+//! over. No guest listed for SP1 declares one, since its allocator frees and coalesces and so keeps
+//! no word that holds a high-water mark.
 
 use std::{str::FromStr, sync::Arc};
 
@@ -17,9 +22,12 @@ use sp1_core_executor::{
     SP1CoreOpts, get_complexity_mapping,
 };
 use sp1_core_machine::riscv::RiscvAir;
-use sp1_primitives::SP1Field;
+use sp1_primitives::{SP1Field, consts::MAX_JIT_LOG_ADDR};
 
-use crate::zkvm::{Composition, Cost, Kind, Profiler};
+use crate::{
+    registry::HeapSymbols,
+    zkvm::{Composition, Cost, Execution, HeapCursor, Kind, Profiler},
+};
 
 /// Cost kinds that partition an SP1 total, in stack order, and the kind holding the whole.
 pub const COMPOSITION: Composition = Composition {
@@ -60,16 +68,27 @@ pub struct SP1Profiler {
     opts: SP1CoreOpts,
     /// What one row of each AIR costs, which is the gas formula's two weightings already blended.
     weights: EnumMap<RiscvAirId, u64>,
+    /// Absent when the registry declares no heap for the guest.
+    heap: Option<HeapCursor>,
 }
 
 impl SP1Profiler {
-    pub fn new(elf: &[u8]) -> Result<Self> {
+    pub fn new(elf: &[u8], heap: Option<&HeapSymbols>) -> Result<Self> {
+        let heap = heap
+            .map(|symbols| HeapCursor::resolve(elf, symbols))
+            .transpose()?;
+        // `get_memory_value` indexes a raw buffer without checking the address, so what the executor
+        // reserves for the guest bounds what it can be asked for.
+        if let Some(heap) = &heap {
+            heap.ensure_readable(0..1 << MAX_JIT_LOG_ADDR)?;
+        }
         let program = Program::from(elf)
             .map_err(|error| anyhow!("failed to disassemble the guest ELF: {error}"))?;
         Ok(Self {
             program: Arc::new(program),
             opts: SP1CoreOpts::default(),
             weights: weights(),
+            heap,
         })
     }
 
@@ -80,7 +99,7 @@ impl SP1Profiler {
 }
 
 impl Profiler for SP1Profiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Cost> {
+    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
         // Gas accounts a chunk boundary as a shard boundary, so it grows as chunks get smaller. The
         // cadence gas was calibrated against is pinned here rather than the smaller one that only
         // bounds the executor's own memory.
@@ -147,12 +166,20 @@ impl Profiler for SP1Profiler {
             )
         })?;
 
-        Ok(Cost::from([
-            (OPCODE.to_owned(), opcode),
-            (SYSCALL.to_owned(), syscall),
-            (SYSTEM.to_owned(), system),
-            (COMPOSITION.total.to_owned(), cost),
-        ]))
+        Ok(Execution {
+            cost: Cost::from([
+                (OPCODE.to_owned(), opcode),
+                (SYSCALL.to_owned(), syscall),
+                (SYSTEM.to_owned(), system),
+                (COMPOSITION.total.to_owned(), cost),
+            ]),
+            // The executor keeps the memory it ran against, so the cursor is still there to read
+            // once the chunks are done.
+            peak_heap_bytes: self
+                .heap
+                .as_ref()
+                .and_then(|heap| heap.peak(executor.get_memory_value(heap.cursor).value)),
+        })
     }
 }
 

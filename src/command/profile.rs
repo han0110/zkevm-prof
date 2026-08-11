@@ -24,7 +24,7 @@ use rayon::prelude::*;
 
 use crate::{
     fixture, registry,
-    zkvm::{Cost, Entry, Meta, Profile, Profiler, profiler},
+    zkvm::{Entry, Execution, Meta, Profile, Profiler, profiler},
 };
 
 /// Profiles one block, turning a panic inside the backend into an error.
@@ -33,7 +33,7 @@ use crate::{
 /// and rayon re-raises a worker's panic on the thread collecting the results, which would discard a
 /// whole corpus over one bad block. Backends carry no state from one block to the next, so a caught
 /// panic leaves nothing inconsistent behind.
-fn profile_block(profiler: &dyn Profiler, stateless_input: &[u8]) -> Result<Cost> {
+fn profile_block(profiler: &dyn Profiler, stateless_input: &[u8]) -> Result<Execution> {
     match catch_unwind(AssertUnwindSafe(|| profiler.profile(stateless_input))) {
         Ok(result) => result,
         Err(panic) => {
@@ -108,7 +108,8 @@ impl ProfileCmd {
                     )
                 })?,
         };
-        let profiler = profiler(self.zkvm, &elf)?;
+        let heap = registry::heap_symbols(self.zkvm, &self.stateless_validator)?;
+        let profiler = profiler(self.zkvm, &elf, heap)?;
 
         let paths = fixture::find(&self.input)?;
         eprintln!(
@@ -143,14 +144,15 @@ impl ProfileCmd {
                 // Counts blocks rather than files, since a fixture file may hold several tests.
                 let done = done.fetch_add(1, Ordering::Relaxed) + 1;
                 match result {
-                    Ok(cost) => {
+                    Ok(execution) => {
                         if done.is_multiple_of(25) {
                             report(format!("[{done}] {}", fixture.test_name));
                         }
                         Some((
                             fixture.test_name,
                             Entry {
-                                cost,
+                                cost: execution.cost,
+                                peak_heap_bytes: execution.peak_heap_bytes,
                                 metadata: fixture.metadata,
                             },
                         ))
@@ -196,12 +198,12 @@ impl ProfileCmd {
 
 #[cfg(test)]
 mod tests {
-    use super::{Cost, Profiler, Result, profile_block};
+    use super::{Execution, Profiler, Result, profile_block};
 
     struct Panicking;
 
     impl Profiler for Panicking {
-        fn profile(&self, _: &[u8]) -> Result<Cost> {
+        fn profile(&self, _: &[u8]) -> Result<Execution> {
             panic!("the guest hit an unaligned operand")
         }
     }

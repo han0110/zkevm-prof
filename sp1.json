@@ -1,8 +1,8 @@
 {
   "zkvm": "sp1",
   "zkvm_version": "v6.3.1",
-  "generated_at": 1786276865,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31303996968",
+  "generated_at": 1786474972,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31508461116",
   "blocks": 1000,
   "kinds": [
     "opcode",
@@ -42,7 +42,7 @@
       ]
     }
   ],
-  "lines": [
+  "cost_lines": [
     {
       "label": "ethrex-sp1",
       "points": [
@@ -10053,5 +10053,6 @@
         ]
       ]
     }
-  ]
+  ],
+  "heap_lines": []
 }

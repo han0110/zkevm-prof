@@ -41,5 +41,12 @@ ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.15.0" }
 stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
 stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
 
+# sp1, on the target its executor compiles a native JIT for. Only there is guest memory a file the
+# backend can read the heap out of, so only there are the transpiler and its JIT driven directly.
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+libc = "0.2"
+memmap2 = "0.9"
+sp1-jit = "6.3.1"
+
 [build-dependencies]
 cargo_metadata = "0.23"

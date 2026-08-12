@@ -108,8 +108,7 @@ impl ProfileCmd {
                     )
                 })?,
         };
-        let heap = registry::heap_symbols(self.zkvm, &self.stateless_validator)?;
-        let profiler = profiler(self.zkvm, &elf, heap)?;
+        let profiler = profiler(self.zkvm, &elf)?;
 
         let paths = fixture::find(&self.input)?;
         eprintln!(

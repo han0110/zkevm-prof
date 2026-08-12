@@ -89,7 +89,8 @@ function tooltipTable(head, rows) {
     .join('');
   return (
     head +
-    '<table style="border-collapse:collapse;margin-top:2px;line-height:1.35">' +
+    '<table style="border-collapse:collapse;margin-top:2px;line-height:1.35;' +
+    'font-variant-numeric:tabular-nums">' +
     cells +
     '</table>'
   );
@@ -182,11 +183,17 @@ function sortable(table) {
   const apply = (header, direction) => {
     const column = header.cellIndex;
     const numeric = header.dataset.sort === 'number';
-    const key = (row) => row.cells[column].textContent.trim();
+    // A figure cell carries the number it sorts on, since its text runs a magnitude, a unit and a
+    // ratio together and no reading of that orders the column.
+    const key = (row) =>
+      numeric ? Number(row.cells[column].dataset.value) : row.cells[column].textContent.trim();
     const ordered = rows.slice().sort((left, right) => {
-      const order = numeric
-        ? parseFloat(key(left)) - parseFloat(key(right))
-        : key(left).localeCompare(key(right));
+      const [first, second] = [key(left), key(right)];
+      // A guest with no figure has no place on the scale, so it sorts to the end either way.
+      if (Number.isNaN(first) || Number.isNaN(second)) {
+        return Number.isNaN(first) - Number.isNaN(second);
+      }
+      const order = numeric ? first - second : first.localeCompare(second);
       return direction === 'ascending' ? order : -order;
     });
     headers.forEach((other) => other.removeAttribute('aria-sort'));
@@ -261,6 +268,14 @@ function elfCell(guest) {
   );
 }
 
+/* A magnitude beside its ratio to the smallest guest, which is one column because neither figure
+   reads as a comparison without the other. The ratio is what the cell sorts on, since it orders the
+   same way as the magnitude and carries no unit to read past. */
+function figureCell(value, relative, format) {
+  if (value == null) return '<td></td>';
+  return '<td data-value="' + relative + '">' + format(value) + ' / ' + relative.toFixed(2) + 'x</td>';
+}
+
 function renderTable(data) {
   const body = document.getElementById('cost').tBodies[0];
   body.innerHTML = data.guests
@@ -269,11 +284,10 @@ function renderTable(data) {
       guest.label +
       '</td>' +
       versionCell(guest.guest_version) +
-      '<td>' +
-      si(guest.total) +
-      '</td><td>' +
-      guest.relative.toFixed(2) +
-      'x</td>' +
+      // Cost is carried as the corpus total and shown per block, which is the mean peak heap is
+      // already carried as. Dividing every guest by the same count leaves the ratio beside it whole.
+      figureCell(guest.total / data.blocks, guest.relative, si) +
+      figureCell(guest.peak_heap_bytes, guest.peak_heap_relative, bytes) +
       elfCell(guest) +
       '</tr>'
     )
@@ -298,6 +312,14 @@ function renderComposition(data) {
     .map((kind, index) => (notes[index] ? `<li><code>${kind}</code>: ${notes[index]}</li>` : ''))
     .join('');
 
+  /* Per block, as the overview table shows cost, since a report carries the corpus total. Every
+     share and ratio the chart draws is between two of these, so dividing them all leaves the split
+     itself untouched and only restates the magnitudes. */
+  const guests = data.guests.map((guest) => ({
+    label: guest.label,
+    components: guest.components.map((value) => value / data.blocks),
+  }));
+
   let enabledKinds = new Set(data.kinds);
   let showCost = false;
 
@@ -306,19 +328,19 @@ function renderComposition(data) {
       (sum, kind, index) => (enabledKinds.has(kind) ? sum + guest.components[index] : sum),
       0
     );
-  const visibleTotals = () => data.guests.map((guest) => visibleTotal(guest));
+  const visibleTotals = () => guests.map((guest) => visibleTotal(guest));
   const visiblePeak = () => Math.max.apply(null, visibleTotals()) || 1;
 
   const kindLabel = (point) => {
     if (point.value / visiblePeak() < LABEL_MIN_FRACTION) return '';
     if (showCost) return si(point.value);
-    return Math.round((point.value / visibleTotal(data.guests[point.dataIndex])) * 100) + '%';
+    return Math.round((point.value / visibleTotal(guests[point.dataIndex])) * 100) + '%';
   };
 
   /* Cost beside the ratio to the cheapest guest, so dropping a kind shows the comparison without
      it. */
   const totalLabel = (point) => {
-    const total = visibleTotal(data.guests[point.dataIndex]);
+    const total = visibleTotal(guests[point.dataIndex]);
     const best = Math.min.apply(null, visibleTotals());
     return si(total) + ' / ' + (best > 0 ? (total / best).toFixed(2) + 'x' : '-');
   };
@@ -336,7 +358,7 @@ function renderComposition(data) {
       color: contrastText(at(KIND_COLORS, index)),
       formatter: kindLabel,
     },
-    data: data.guests.map((guest) => guest.components[index]),
+    data: guests.map((guest) => guest.components[index]),
   }));
 
   /* Zero-width spacer closing each stack, so the row total prints past the end of the bar. */
@@ -353,7 +375,7 @@ function renderComposition(data) {
       color: THEME.muted,
       formatter: totalLabel,
     },
-    data: data.guests.map(() => 0),
+    data: guests.map(() => 0),
   };
 
   const option = {
@@ -371,7 +393,7 @@ function renderComposition(data) {
       ...AXIS,
       type: 'category',
       inverse: true,
-      data: data.guests.map((guest) => guest.label),
+      data: guests.map((guest) => guest.label),
       axisLabel: { ...AXIS.axisLabel, fontSize: 12 },
     },
     tooltip: {
@@ -379,7 +401,7 @@ function renderComposition(data) {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
       formatter: (params) => {
-        const guest = data.guests[params[0].dataIndex];
+        const guest = guests[params[0].dataIndex];
         const total = visibleTotal(guest);
         const rows = params
           .filter((point) => point.seriesName !== TOTAL_SERIES)
@@ -394,7 +416,7 @@ function renderComposition(data) {
     series: kindSeries.concat([totalSeries]),
   };
 
-  const chart = mount('composition', option, Math.max(180, data.guests.length * 46 + 72));
+  const chart = mount('composition', option, Math.max(180, guests.length * 46 + 72));
 
   /* Merges into the existing series, so the bars are not rebuilt on every toggle. */
   const refresh = () => {
@@ -491,9 +513,13 @@ function renderLines(id, lines, scale, order) {
       trigger: 'axis',
       formatter: (params) => {
         const head = 'Block #' + params[0].value[2] + ' - ' + si(params[0].value[0]) + ' gas';
+        // Against the smallest guest on this block rather than over the whole corpus, so the ratio
+        // reads as the comparison the block itself makes. A hidden guest is not among the params,
+        // which leaves the ratio between the guests actually drawn.
+        const smallest = Math.min.apply(null, params.map((point) => point.value[1]));
         const rows = params.map((point) => [
           point.marker + point.seriesName,
-          scale.format(point.value[1]),
+          scale.format(point.value[1]) + ' / ' + (point.value[1] / smallest).toFixed(2) + 'x',
         ]);
         return tooltipTable(head, rows);
       },
@@ -527,8 +553,10 @@ const HEAP_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
 /* Guest order the colours are keyed on, shared by both line charts. */
 const guestOrder = (data) => data.guests.map((guest) => guest.label);
 
+/* A tab is published by its own run, so a report written before the cost lines were named apart
+   from the heap ones still loads, read under the key it carries. */
 function renderGas(data) {
-  return renderLines('gas', data.cost_lines, COST_SCALE, guestOrder(data));
+  return renderLines('gas', data.cost_lines ?? data.lines, COST_SCALE, guestOrder(data));
 }
 
 /* A report written before peak heap was recorded, or one whose zkVM cannot read it, carries no heap

@@ -85,9 +85,15 @@ the same zkVM, since costs from different zkVMs are in different units.
 `json` carries the series in the units they were profiled in, along with the zkVM version, the block
 count, where each guest's ELF is published and the time and workflow run that produced them. Peak
 heap is carried the same way in `heap_lines`, holding only the guests whose profiles recorded it, so
-a report whose guests recorded none leaves that section off the page. `md` renders the costs as
-tables, from [`templates/report.md`](../templates/report.md), for pasting into a pull request, and
-leaves peak heap to the page.
+a report whose guests recorded none leaves that section off the page. A guest also carries the mean
+of its peaks along with its ratio to the smallest, which is the one heap figure per guest both tables
+show. That ratio is taken between the means rather than averaged per block, since an average of
+ratios reads differently depending on which guest it is stated against. `md` renders the same figures
+as tables, from [`templates/report.md`](../templates/report.md), for pasting into a pull request.
+
+Cost is shown per block wherever it appears, dividing the total a guest carries by the block count so
+it reads beside the mean peak heap rather than against a different span. That covers the composition
+as well as the tables, since a kind's share of a total is its share of the mean.
 
 The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
 `openvm.json` fills the OpenVM tab, `sp1.json` the SP1 tab and `zisk.json` the ZisK tab, and a tab

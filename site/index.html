@@ -23,11 +23,11 @@
 </section>
 
 <section class="card" id="cost-card">
-  <h2>Cost</h2>
-  <p>Empirically cost gaps overstate proving time gaps, so take the relative column as a reference rather than a proving time prediction.</p>
+  <h2>Overview</h2>
+  <p>Both figures are means over the profiled blocks, each beside its ratio to the smallest guest. Empirically cost gaps overstate proving time gaps, so take the relative figures as a reference rather than a proving time prediction. Peak heap is empty for a guest whose backend cannot read the heap.</p>
   <div class="scroller">
     <table id="cost">
-      <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th>Total cost</th><th data-sort="number">Relative</th><th>ELF</th></tr></thead>
+      <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th data-sort="number">Avg cost</th><th data-sort="number">Avg peak heap</th><th>ELF</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -35,7 +35,7 @@
 
 <section class="card hidden" id="composition-card">
   <h2>Cost composition</h2>
-  <p>Total profiled cost per guest, split by the kinds that sum to it.</p>
+  <p>Mean cost per block for each guest, split by the kinds that sum to it.</p>
   <div id="composition" class="chart"></div>
   <ul class="note" id="composition-note"></ul>
 </section>

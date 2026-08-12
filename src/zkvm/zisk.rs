@@ -22,8 +22,8 @@ use crate::zkvm::{
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
 ///
 /// These name the only rows read out of the emulator's report. `VARIABLE` is skipped because it is
-/// `TOTAL` less `BASE`, `FROPS` because it re-counts opcodes already priced under `OPCODES`, and
-/// `STEPS` because it counts work rather than pricing it.
+/// `TOTAL` less `BASE`, `FROPS` because the emulator prices those instructions into an accumulator
+/// of their own that `TOTAL` never sums, and `STEPS` because it counts work rather than pricing it.
 pub const COMPOSITION: Composition = Composition {
     total: "total",
     components: &[
@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(cost["memory"], 766637533);
         assert_eq!(cost["base"], 293601280);
         assert_eq!(cost["total"], 10185334731);
-        // Rows that are derived, re-counted or not costs at all stay out.
+        // Rows that are derived, priced apart from the total, or not costs at all stay out.
         for skipped in ["variable", "frops", "steps"] {
             assert!(!cost.contains_key(skipped), "{skipped} was recorded");
         }

@@ -18,16 +18,14 @@
 //! data and holes. Reaching that file means driving the transpiler the executor wraps, which is why
 //! the reading is confined to the targets that executor compiles a native JIT for.
 
-use std::{str::FromStr, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow, bail};
 use enum_map::EnumMap;
 use sp1_core_executor::{
     ExecutionReport, GAS_TRACE_CHUNK_THRESHOLD, GasEstimatingVMEnum, Program, RiscvAirId,
-    SP1CoreOpts, TraceChunkRaw, get_complexity_mapping,
+    SP1CoreOpts, TraceChunkRaw, get_complexity_mapping, rv64im_costs,
 };
-use sp1_core_machine::riscv::RiscvAir;
-use sp1_primitives::SP1Field;
 
 use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler};
 
@@ -315,13 +313,14 @@ impl Profiler for SP1Profiler {
 
 /// What one row of each AIR costs, which is its trace cells weighed against its constraints.
 ///
-/// SP1 keeps the two tables apart because gas blends them only at the end. Blending them per AIR
-/// instead leaves the same total while letting it split by what the program did.
+/// Both tables come from the executor, which is what prices the total, so the parts cannot drift
+/// from the whole. SP1 keeps them apart because gas blends them only at the end, and blending them
+/// per AIR instead leaves the same total while letting it split by what the program did.
 fn weights() -> EnumMap<RiscvAirId, u64> {
     let complexity = get_complexity_mapping();
     let mut cells: EnumMap<RiscvAirId, u64> = EnumMap::default();
-    for (name, cost) in RiscvAir::<SP1Field>::costs() {
-        cells[RiscvAirId::from_str(&name).expect("SP1 names its own AIRs")] = cost;
+    for (air, cost) in rv64im_costs() {
+        cells[air] = cost as u64;
     }
     EnumMap::from_fn(|air| TRACE_AREA_WEIGHT * cells[air] + complexity[air])
 }

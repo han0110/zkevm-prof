@@ -15,7 +15,7 @@ use elf::{ElfBytes, endian::AnyEndian};
 use ere_catalog::zkVMKind;
 use serde::{Deserialize, Serialize};
 
-use crate::{fixture::Metadata, registry::HeapSymbols};
+use crate::fixture::Metadata;
 
 /// Cost of one execution, keyed by the cost kinds the zkVM defines.
 pub type Cost = BTreeMap<String, u64>;
@@ -24,67 +24,48 @@ pub type Cost = BTreeMap<String, u64>;
 #[derive(Debug)]
 pub struct Execution {
     pub cost: Cost,
-    /// Peak bytes the guest's heap allocator handed out, absent when its entry declares no heap or
-    /// the cursor that entry names never moved.
+    /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
+    /// left its heap untouched.
     pub peak_heap_bytes: Option<u64>,
 }
 
-/// Where a guest keeps its allocator's cursor, resolved against the ELF that declared it.
+/// Address the guest ELF gives `symbol`, which a guest whose zkVM delimits its heap with it carries.
 ///
-/// A backend does one thing with this. Once a run is over it reads the word at `cursor` out of the
-/// guest memory its zkVM exposes and hands the value to [`HeapCursor::peak`]. What that word means
-/// is the registry's claim about the guest rather than anything a backend knows, so a guest handing
-/// heap out from a cursor that only moves up reports its high-water mark, and a guest that keeps no
-/// such word declares no heap and reports nothing.
-pub struct HeapCursor {
-    /// Guest address of the word holding the next free heap address.
-    pub cursor: u64,
-    /// Guest address the heap starts at, which the allocator initializes the cursor to.
-    pub base: u64,
+/// A missing symbol is an error rather than a heap of nothing, since a guest quietly absent from the
+/// heap chart reads as one that allocates nothing at all.
+pub fn heap_symbol(elf: &[u8], symbol: &str) -> Result<u64> {
+    symbol_address(elf, symbol)?
+        .with_context(|| format!("the guest ELF carries no {symbol}, which delimits its heap"))
 }
 
-impl HeapCursor {
-    /// Resolves the symbols an entry declares against the guest they were declared for.
-    ///
-    /// A declared symbol the ELF does not carry is an error rather than a heap of nothing, since a
-    /// guest quietly missing from the heap chart reads as one that allocates nothing at all.
-    pub fn resolve(elf: &[u8], symbols: &HeapSymbols) -> Result<Self> {
-        let address = |symbol: &str| {
-            symbol_address(elf, symbol)?.with_context(|| {
-                format!(
-                    "the guest ELF carries no {symbol}, which the registry declares its heap in"
-                )
-            })
-        };
-        Ok(Self {
-            cursor: address(&symbols.cursor)?,
-            base: address(&symbols.base)?,
-        })
-    }
+/// Guest addresses the heap covers, from the `start` symbol its zkVM's toolchain marks the bottom
+/// with and the `end` that zkVM stops it at.
+///
+/// Which symbol marks the bottom is a property of the toolchain rather than of the guest, so every
+/// guest built for one zkVM is delimited alike however it allocates.
+pub fn heap_range(elf: &[u8], start: &str, end: u64) -> Result<Range<u64>> {
+    let start = heap_symbol(elf, start)?;
+    ensure!(
+        start < end,
+        "the guest starts its heap at {start:#x}, past the {end:#x} its zkVM ends it at"
+    );
+    Ok(start..end)
+}
 
-    /// Fails when the word at `cursor` falls outside `memory`, the guest addresses the backend holds
-    /// memory for.
-    ///
-    /// Backends check this once at construction rather than per block, since a cursor out of range
-    /// is a registry error that will not fix itself, and the memory behind these reads is a raw
-    /// buffer in more than one of them.
-    pub fn ensure_readable(&self, memory: Range<u64>) -> Result<()> {
-        let word = self.cursor..self.cursor + size_of::<u64>() as u64;
-        ensure!(
-            memory.start <= word.start && word.end <= memory.end,
-            "the declared cursor resolves to {:#x}, which is outside the guest memory the backend reads",
-            self.cursor
-        );
-        Ok(())
-    }
-
-    /// Peak heap in bytes, from the cursor's final `value`, absent when the cursor never moved.
-    ///
-    /// A guest carrying the symbol but allocating through something else leaves the cursor where it
-    /// started, which is no reading rather than an empty heap.
-    pub fn peak(&self, value: u64) -> Option<u64> {
-        (value > self.base).then(|| value - self.base)
-    }
+/// Peak heap in bytes, from the heap `bytes` a run left behind, absent when the guest left the whole
+/// heap zero.
+///
+/// Guest memory starts zeroed and an allocator hands memory back without zeroing it, so the bytes
+/// left non-zero are the ones the guest reached and no allocator has to cooperate for them to be
+/// read. Taking the span between the outermost of them rather than the distance from the heap's
+/// bottom reads the same whether memory is handed out from the bottom up or from the top down.
+pub fn peak_heap_bytes(bytes: &[u8]) -> Option<u64> {
+    let highest = bytes.iter().rposition(|byte| *byte != 0)?;
+    let lowest = bytes
+        .iter()
+        .position(|byte| *byte != 0)
+        .expect("a heap holding a highest non-zero byte holds a lowest one");
+    Some((highest - lowest + 1) as u64)
 }
 
 /// Address of the symbol in `elf` named `name`, absent when the ELF carries none.
@@ -148,15 +129,11 @@ pub trait Profiler: Sync {
     fn profile(&self, stateless_input: &[u8]) -> Result<Execution>;
 }
 
-pub fn profiler(
-    zkvm: zkVMKind,
-    elf: &[u8],
-    heap: Option<&HeapSymbols>,
-) -> Result<Box<dyn Profiler>> {
+pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
     match zkvm {
-        zkVMKind::OpenVM => Ok(Box::new(openvm::OpenVMProfiler::new(elf, heap)?)),
-        zkVMKind::SP1 => Ok(Box::new(sp1::SP1Profiler::new(elf, heap)?)),
-        zkVMKind::Zisk => Ok(Box::new(zisk::ZiskProfiler::new(elf, heap)?)),
+        zkVMKind::OpenVM => Ok(Box::new(openvm::OpenVMProfiler::new(elf)?)),
+        zkVMKind::SP1 => Ok(Box::new(sp1::SP1Profiler::new(elf)?)),
+        zkVMKind::Zisk => Ok(Box::new(zisk::ZiskProfiler::new(elf)?)),
     }
 }
 
@@ -187,8 +164,8 @@ pub struct Meta {
 #[derive(Deserialize, Serialize)]
 pub struct Entry {
     pub cost: Cost,
-    /// Peak bytes the guest's heap allocator handed out, absent when its entry declares no heap or
-    /// the cursor that entry names never moved.
+    /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
+    /// left its heap untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_heap_bytes: Option<u64>,
     pub metadata: Metadata,
@@ -196,30 +173,33 @@ pub struct Entry {
 
 #[cfg(test)]
 mod tests {
-    use crate::zkvm::HeapCursor;
+    use crate::zkvm::peak_heap_bytes;
 
+    /// A heap handed out from the bottom up and the same heap handed out from the top down read
+    /// alike, which is what lets one reading serve allocators that grow in either direction.
     #[test]
-    fn only_a_cursor_that_moved_is_a_peak() {
-        let heap = HeapCursor {
-            cursor: 0xa00301f0,
-            base: 0xa0430318,
-        };
-        assert_eq!(heap.peak(0xa0430318 + 4096), Some(4096));
-        // A guest allocating through another allocator leaves the cursor where ziskos started it,
-        // which is no reading rather than an empty heap.
-        assert_eq!(heap.peak(0xa0430318), None);
-        assert_eq!(heap.peak(0), None);
-        assert_eq!(heap.peak(0xa0430317), None);
+    fn the_span_between_the_outermost_bytes_is_the_peak() {
+        let mut upward = [0u8; 64];
+        upward[..10].copy_from_slice(&[1; 10]);
+        assert_eq!(peak_heap_bytes(&upward), Some(10));
+
+        let mut downward = [0u8; 64];
+        downward[54..].copy_from_slice(&[1; 10]);
+        assert_eq!(peak_heap_bytes(&downward), Some(10));
     }
 
-    /// The whole word has to be inside the memory, not just the address it starts at.
+    /// Zeros a guest wrote read as untouched, so the span is what the outermost non-zero bytes
+    /// enclose rather than the count of them.
     #[test]
-    fn a_cursor_is_readable_only_with_its_whole_word() {
-        let cursor = |cursor| HeapCursor { cursor, base: 0 };
-        let memory = 0xa0000000..0xc0000000;
-        assert!(cursor(0xa0000000).ensure_readable(memory.clone()).is_ok());
-        assert!(cursor(0xbffffff8).ensure_readable(memory.clone()).is_ok());
-        assert!(cursor(0xbffffff9).ensure_readable(memory.clone()).is_err());
-        assert!(cursor(0x9fffffff).ensure_readable(memory).is_err());
+    fn the_span_covers_the_zeros_between_the_outermost_bytes() {
+        let mut heap = [0u8; 64];
+        (heap[0], heap[41]) = (1, 1);
+        assert_eq!(peak_heap_bytes(&heap), Some(42));
+    }
+
+    #[test]
+    fn an_untouched_heap_is_no_reading_rather_than_an_empty_one() {
+        assert_eq!(peak_heap_bytes(&[0; 64]), None);
+        assert_eq!(peak_heap_bytes(&[]), None);
     }
 }

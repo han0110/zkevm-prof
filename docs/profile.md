@@ -36,9 +36,8 @@ written to exercise and the ones before it only build the state it runs against.
 several tests contributes one entry per test.
 
 The output pairs the per-test costs with the zkVM that produced them, which is how the report knows
-what a cost map's kinds mean. An entry also carries `peak_heap_bytes` for a guest whose registry
-entry declares where it keeps its heap, and omits the field for one that declares none rather than
-recording a heap of nothing.
+what a cost map's kinds mean. An entry also carries `peak_heap_bytes` on a zkVM whose backend reads
+the heap, and omits the field where none was read rather than recording a heap of nothing.
 
 ```json
 {
@@ -86,9 +85,15 @@ the same zkVM, since costs from different zkVMs are in different units.
 `json` carries the series in the units they were profiled in, along with the zkVM version, the block
 count, where each guest's ELF is published and the time and workflow run that produced them. Peak
 heap is carried the same way in `heap_lines`, holding only the guests whose profiles recorded it, so
-a report whose guests recorded none leaves that section off the page. `md` renders the costs as
-tables, from [`templates/report.md`](../templates/report.md), for pasting into a pull request, and
-leaves peak heap to the page.
+a report whose guests recorded none leaves that section off the page. A guest also carries the mean
+of its peaks along with its ratio to the smallest, which is the one heap figure per guest both tables
+show. That ratio is taken between the means rather than averaged per block, since an average of
+ratios reads differently depending on which guest it is stated against. `md` renders the same figures
+as tables, from [`templates/report.md`](../templates/report.md), for pasting into a pull request.
+
+Cost is shown per block wherever it appears, dividing the total a guest carries by the block count so
+it reads beside the mean peak heap rather than against a different span. That covers the composition
+as well as the tables, since a kind's share of a total is its share of the mean.
 
 The page itself is static and lives in [`site/`](../site). It loads one report per zkVM by name, so
 `openvm.json` fills the OpenVM tab, `sp1.json` the SP1 tab and `zisk.json` the ZisK tab, and a tab
@@ -106,13 +111,7 @@ Adding a guest is adding an entry, and the profile workflow reads its matrix fro
 ```json
 {
     "zisk": [
-        {
-            "stateless-validator": "ethrex",
-            "heap": {
-                "cursor": "ZISK_BUMP_HEAP_POS",
-                "base": "_kernel_heap_bottom"
-            }
-        },
+        { "stateless-validator": "ethrex" },
         {
             "stateless-validator": "nethermind",
             "version": "glamsterdam-devnet-7",
@@ -121,20 +120,6 @@ Adding a guest is adding an entry, and the profile workflow reads its matrix fro
     ]
 }
 ```
-
-`heap` names the two symbols of that guest's own ELF that locate the heap it allocates from. `cursor`
-holds the next free heap address and `base` marks where the heap starts, so the peak is the one less
-the other. Both are matched exactly and a declared symbol the ELF does not carry fails the run, since
-a guest quietly missing from the heap chart reads as one that allocates nothing. An entry declaring
-no `heap` records no peak, which is how the SP1 guests are listed, and a guest that carries the
-symbols but allocates through something else leaves the cursor where it started and likewise records
-none.
-
-The symbols belong to the artifact rather than to the zkVM. A Rust guest keeps the cursor in a
-function local, so it reaches the ELF under a v0 mangled name carrying a crate disambiguator that
-differs from build to build, which is why two guests on the same runtime name it differently. A
-published ELF gives up both names to `readelf -sW`, and rebuilding a guest means refreshing its
-entry.
 
 Guests left to [ere-guests][ere-guests] are downloaded at the version `stateless-validator-catalog`
 is pinned to in `Cargo.toml`, which the build script reads so the download and the linked catalog
@@ -173,6 +158,48 @@ second build fail with `MSB3021`. Restore ownership before rebuilding.
 docker run --rm -v "$PWD/../artifacts/bin/Nethermind.Stateless.ZiskGuest/release":/w alpine:3 \
   chown -R "$(id -u):$(id -g)" /w
 ```
+
+## Peak heap
+
+A backend reads peak heap out of the guest memory its run left behind, knowing nothing about the
+guest beyond where its heap lies. Guest memory starts zeroed and an allocator hands memory back
+without zeroing it, so the bytes left non-zero are the ones the guest reached, and the peak is the
+span between the outermost of them. Taking a span rather than the distance from the heap's bottom
+reads the same whether memory is handed out from the bottom up or from the top down, which is what
+lets one reading serve the Nethermind guest, whose allocator grows downward from the top.
+
+Where the heap lies is a property of the zkVM's toolchain rather than of the guest, so it is derived
+per zkVM rather than declared per guest. ZisK guests carry `_kernel_heap_bottom` and
+`_kernel_heap_top`, since the stack sits between the guest image and the heap and `_end` therefore
+marks the bottom of the stack. OpenVM puts the stack below the image and runs the heap from `_end`
+to the end of its address space. A guest whose ELF is missing the symbol its zkVM delimits the heap
+with fails the run, since a guest quietly absent from the heap chart reads as one that allocates
+nothing.
+
+Most of what separates one zkVM's figure from another's for the same guest is the allocator that
+zkVM's toolchain links. An allocator that never reuses memory makes the machine hold everything the
+guest ever allocated, while one that recycles holds only the peak its arena reached, and the reading
+follows that difference rather than hiding it. Validating mainnet block 25580000, the Ethrex guest
+reads 65.4 MB against the never-reusing allocator ZisK links and 23.9 MB against the recycling one
+SP1 links, and the Reth guest reads 57.5 MB against 39.7 MB. The gap is the memory a guest buys by
+never giving any back, so the ratio between the two is a measure of how much it allocates and
+abandons rather than of the work it does.
+
+One limit is worth knowing. Memory an allocator reserved but the guest never touched is invisible,
+because nothing distinguishes it from memory that was never handed out, so a guest that bumps its
+cursor over pages it never writes reads lower than its allocator would claim. Only the two ends of
+the reading are exposed to this, since zeros between them are covered by the span, and the reading
+otherwise sits within a page of the truth. Measured against the cursors the ZisK and OpenVM guests
+happen to keep, the shortfall runs from 4 to 224 bytes, and SP1's page granular reading overshoots
+by under 1.5 KiB.
+
+SP1 reaches its heap differently. Its executor serves guest memory a word at a time and its heap
+spans 110 GiB, too wide to read as a slice, so the backend drives the transpiler that executor wraps
+and reads the memfd the resulting JIT runs the guest against. The pages that file holds are the
+pages the guest reached and the kernel reports them by seeking between data and holes, which makes
+the reading page granular where the others are byte exact. The last page of the span is left out,
+since the allocator SP1 links caps its pool there before the guest starts. That JIT exists only on
+x86_64 Linux and the reading goes with it, so a build for any other target records no heap on SP1.
 
 ## zkVMs
 

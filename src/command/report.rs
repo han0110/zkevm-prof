@@ -267,6 +267,9 @@ struct ReportGuest {
     elf_url: Option<String>,
     total: f64,
     relative: f64,
+    /// Absent for a guest whose backend cannot read the heap, which leaves its cell empty.
+    peak_heap_bytes: Option<f64>,
+    peak_heap_relative: Option<f64>,
     components: Vec<f64>,
 }
 
@@ -289,6 +292,11 @@ impl Report {
             .iter()
             .map(|guest| guest.total)
             .fold(f64::INFINITY, f64::min);
+        let peaks: Vec<Option<f64>> = series.iter().map(peak_heap).collect();
+        let smallest = peaks
+            .iter()
+            .flatten()
+            .fold(f64::INFINITY, |smallest, peak| smallest.min(*peak));
         Self {
             zkvm: zkvm.to_string(),
             zkvm_version: zkvm_version.to_owned(),
@@ -310,13 +318,16 @@ impl Report {
                 .collect(),
             guests: series
                 .iter()
-                .map(|guest| ReportGuest {
+                .zip(&peaks)
+                .map(|(guest, peak)| ReportGuest {
                     label: guest.label.clone(),
                     guest: guest.guest.clone(),
                     guest_version: guest.guest_version.clone(),
                     elf_url: guest.elf_url.clone(),
                     total: guest.total,
                     relative: guest.total / cheapest,
+                    peak_heap_bytes: *peak,
+                    peak_heap_relative: peak.map(|peak| peak / smallest),
                     components: guest.components.clone(),
                 })
                 .collect(),
@@ -359,6 +370,7 @@ struct View {
     zkvm_version: String,
     kinds: Vec<Legend>,
     guests: Vec<Guest>,
+    heap: Vec<Heap>,
 }
 
 /// A kind's column header and the note printed under the table.
@@ -380,6 +392,15 @@ struct Component {
     share: String,
 }
 
+/// One guest's peak heap, carried only for the guests whose profile recorded one, as `heap_lines`
+/// carries them for the page.
+struct Heap {
+    label: String,
+    version: String,
+    peak: String,
+    relative: String,
+}
+
 impl View {
     fn new(
         series: &[Series],
@@ -390,6 +411,14 @@ impl View {
         let cheapest = series
             .iter()
             .map(|guest| guest.total)
+            .fold(f64::INFINITY, f64::min);
+        let peaks: Vec<(&Series, f64)> = series
+            .iter()
+            .filter_map(|guest| Some((guest, peak_heap(guest)?)))
+            .collect();
+        let smallest = peaks
+            .iter()
+            .map(|(_, peak)| *peak)
             .fold(f64::INFINITY, f64::min);
         Self {
             blocks,
@@ -407,20 +436,46 @@ impl View {
                 .map(|guest| Guest {
                     label: guest.label.clone(),
                     version: guest.guest_version.clone(),
-                    total: si(guest.total),
+                    // Per block, as the page shows it and as the mean peak heap beside it already
+                    // reads. The ratio is between the totals, which is the same ratio either way.
+                    total: si(guest.total / blocks as f64),
                     relative: format!("{:.2}x", guest.total / cheapest),
                     components: guest
                         .components
                         .iter()
                         .map(|value| Component {
-                            value: si(*value),
+                            value: si(*value / blocks as f64),
                             share: format!("{:.1}", value / guest.total * 100.0),
                         })
                         .collect(),
                 })
                 .collect(),
+            heap: peaks
+                .iter()
+                .map(|(guest, peak)| Heap {
+                    label: guest.label.clone(),
+                    version: guest.guest_version.clone(),
+                    peak: bytes(*peak),
+                    relative: format!("{:.2}x", peak / smallest),
+                })
+                .collect(),
         }
     }
+}
+
+/// The mean peak heap over the blocks the series recorded one for, or nothing when it recorded none.
+///
+/// A mean rather than the largest, since one figure per guest is there to compare how much memory
+/// the corpus takes them rather than to size a machine for their worst block. Ratios are taken
+/// between the means rather than averaged per block, which keeps them reading the same whichever
+/// guest they are stated against.
+fn peak_heap(series: &Series) -> Option<f64> {
+    let (sum, count) = series
+        .blocks
+        .iter()
+        .filter_map(|block| block.peak_heap_bytes)
+        .fold((0.0, 0u32), |(sum, count), peak| (sum + peak, count + 1));
+    (count > 0).then(|| sum / f64::from(count))
 }
 
 /// Formats a magnitude with an SI suffix, which keeps costs past 10^10 readable.
@@ -433,6 +488,17 @@ fn si(value: f64) -> String {
     format!("{value:.0}")
 }
 
+/// Formats a byte count in binary units, which is how a memory figure reads and how the page prints
+/// the same number.
+fn bytes(value: f64) -> String {
+    for (limit, unit) in [(1u64 << 30, "GiB"), (1 << 20, "MiB"), (1 << 10, "KiB")] {
+        if value.abs() >= limit as f64 {
+            return format!("{:.2} {unit}", value / limit as f64);
+        }
+    }
+    format!("{value:.0} B")
+}
+
 #[derive(Template)]
 #[template(path = "report.md")]
 struct MarkdownReport<'a> {
@@ -441,12 +507,22 @@ struct MarkdownReport<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::si;
+    use super::{bytes, si};
 
     #[test]
     fn magnitudes_carry_an_si_suffix() {
         assert_eq!(si(56_513_151_760.0), "56.51G");
         assert_eq!(si(30_100_000.0), "30.10M");
         assert_eq!(si(999.0), "999");
+    }
+
+    /// A memory figure reads in binary units, so the same count that prints as 57.53M of cost prints
+    /// as the mebibytes it actually occupies.
+    #[test]
+    fn byte_counts_carry_a_binary_unit() {
+        assert_eq!(bytes(57_531_938.0), "54.87 MiB");
+        assert_eq!(bytes(1_073_741_824.0), "1.00 GiB");
+        assert_eq!(bytes(2048.0), "2.00 KiB");
+        assert_eq!(bytes(999.0), "999 B");
     }
 }

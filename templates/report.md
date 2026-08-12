@@ -5,7 +5,7 @@ Profiles of {{ view.guests.len() }} guests over {{ view.blocks }} blocks, on {{ 
 
 ## Cost
 
-| Guest | Version | Total cost | Relative |
+| Guest | Version | Avg cost | Relative |
 | --- | --- | ---: | ---: |
 {% for guest in view.guests -%}
 | {{ guest.label }} | {{ guest.version }} | {{ guest.total }} | {{ guest.relative }} |
@@ -20,5 +20,16 @@ Profiles of {{ view.guests.len() }} guests over {{ view.blocks }} blocks, on {{ 
 {% endfor %}
 {% for kind in view.kinds -%}
 - `{{ kind.name }}`: {{ kind.note }}
+{% endfor -%}
+{% endif -%}
+{% if !view.heap.is_empty() %}
+## Peak heap
+
+Mean of the peaks a guest reached over the corpus.
+
+| Guest | Version | Avg peak heap | Relative |
+| --- | --- | ---: | ---: |
+{% for guest in view.heap -%}
+| {{ guest.label }} | {{ guest.version }} | {{ guest.peak }} | {{ guest.relative }} |
 {% endfor -%}
 {% endif -%}

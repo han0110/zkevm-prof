@@ -6,16 +6,17 @@
 //! shelling out.
 //!
 //! Peak heap comes out of the same run. The emulator keeps the whole guest RAM until it is dropped,
-//! so the word the registry names is still there to read once the run is over.
+//! so the heap the ZisK linker script delimits is still there to read once the run is over.
+
+use std::ops::Range;
 
 use anyhow::{Result, anyhow, bail, ensure};
 use zisk_common::EmuTrace;
 use zisk_core::{RAM_ADDR, RAM_SIZE, Riscv2zisk, ZiskRom};
 use ziskemu::{Emu, EmuOptions};
 
-use crate::{
-    registry::HeapSymbols,
-    zkvm::{Composition, Cost, Execution, HeapCursor, Kind, Profiler},
+use crate::zkvm::{
+    Composition, Cost, Execution, Kind, Profiler, heap_range, heap_symbol, peak_heap_bytes,
 };
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
@@ -58,25 +59,33 @@ fn kinds() -> impl Iterator<Item = &'static str> {
         .chain([COMPOSITION.total])
 }
 
+/// Symbols the ZisK linker script delimits the guest heap with.
+///
+/// The stack sits between the guest image and the heap, growing down from `_kernel_heap_bottom`, so
+/// `_end` marks the bottom of the stack rather than of the heap.
+const HEAP_BOTTOM: &str = "_kernel_heap_bottom";
+const HEAP_TOP: &str = "_kernel_heap_top";
+
 pub struct ZiskProfiler {
     rom: ZiskRom,
-    /// Absent when the registry declares no heap for the guest.
-    heap: Option<HeapCursor>,
+    /// Guest addresses the heap covers.
+    heap: Range<u64>,
 }
 
 impl ZiskProfiler {
-    pub fn new(elf: &[u8], heap: Option<&HeapSymbols>) -> Result<Self> {
+    pub fn new(elf: &[u8]) -> Result<Self> {
         let rom = Riscv2zisk::new(elf)
             .run()
             .map_err(|error| anyhow!("failed to transpile the ELF into a ZisK ROM: {error}"))?;
-        let heap = heap
-            .map(|symbols| HeapCursor::resolve(elf, symbols))
-            .transpose()?;
-        // `Mem::read` panics rather than failing on an address it holds no section for, so the RAM
-        // section bounds what the emulator can be asked for.
-        if let Some(heap) = &heap {
-            heap.ensure_readable(RAM_ADDR..RAM_ADDR + RAM_SIZE)?;
-        }
+        let heap = heap_range(elf, HEAP_BOTTOM, heap_symbol(elf, HEAP_TOP)?)?;
+        // `Mem::read_slice` panics rather than failing on a range it holds no one section for, so
+        // the RAM section bounds what the emulator can be asked for.
+        ensure!(
+            RAM_ADDR <= heap.start && heap.end <= RAM_ADDR + RAM_SIZE,
+            "the guest puts its heap at {:#x}..{:#x}, outside the RAM the emulator holds",
+            heap.start,
+            heap.end
+        );
         Ok(Self { rom, heap })
     }
 }
@@ -99,17 +108,15 @@ impl Profiler for ZiskProfiler {
         }
         emu.ctx.stats.set_use_thousands_sep(false);
         let cost = parse(&emu.ctx.stats.report(&self.rom))?;
-        let peak_heap_bytes = self.heap.as_ref().and_then(|heap| {
-            heap.peak(
-                emu.ctx
-                    .inst_ctx
-                    .mem
-                    .read(heap.cursor, size_of::<u64>() as u64),
-            )
-        });
+        // The emulator holds the whole RAM in one buffer, so the heap comes back as a slice of it.
+        let heap = emu
+            .ctx
+            .inst_ctx
+            .mem
+            .read_slice(self.heap.start, self.heap.end - self.heap.start);
         Ok(Execution {
             cost,
-            peak_heap_bytes,
+            peak_heap_bytes: peak_heap_bytes(heap),
         })
     }
 }

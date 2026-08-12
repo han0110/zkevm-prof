@@ -42,8 +42,9 @@ jobs:
     env:
       # A pull request profiles a tenth of the corpus, which catches a regression in the profiler
       # without spending hours per guest.
-      FIXTURE_FILE_ID: ${{ github.event_name == 'pull_request' && '1vG7JU-BV1QTRUU00doX99Ym4dHTYBoB0' || '1KMJJHKmnZrN1CQlFyiL-i69cx46H8Tr0' }}
       FIXTURE_SET: ${{ github.event_name == 'pull_request' && 'mainnet-25580000-100' || 'mainnet-25580000-1000' }}
+      # Release the corpora are published under, each as assets named after the set they hold.
+      FIXTURE_RELEASE: fixtures-mainnet-25580000
     strategy:
       fail-fast: false
       matrix:
@@ -86,26 +87,21 @@ jobs:
 
       - run: cargo build --release --locked
 
-      # Drive answers a refusal with a page rather than a status, so a failed download arrives as
-      # HTML that only fails once tar reads it. The magic bytes name the corpus as the problem here
-      # instead.
-      - name: Download fixtures
+      # A corpus is published as split assets, since a release caps one asset at 2 GiB while leaving
+      # their number and total size free. The parts stream into tar rather than landing whole, which
+      # keeps a second copy off a disk the extracted corpus already fills. --strip-components=1 drops
+      # the archive's top-level directory so the fixtures land directly under fixtures/<set>.
+      - name: Download and extract fixtures
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -fsSL -o fixtures.tar.zst \
-            "https://drive.usercontent.google.com/download?id=${FIXTURE_FILE_ID}&export=download&confirm=t"
-          if [ "$(od -An -tx1 -N4 fixtures.tar.zst | tr -d ' \n')" != "28b52ffd" ]; then
-            echo "the corpus download is not a zstd archive, which is what Drive serves when it"
-            echo "refuses the file. The first bytes are:"
-            head -c 200 fixtures.tar.zst
-            exit 1
-          fi
-
-      # --strip-components=1 drops the archive's top-level directory so the fixtures land directly
-      # under fixtures/<set>.
-      - name: Extract fixtures
-        run: |
+          set -o pipefail
+          gh release download "${FIXTURE_RELEASE}" \
+            --pattern "${FIXTURE_SET}.tar.zst.*.part" --dir parts
           mkdir -p "fixtures/${FIXTURE_SET}"
-          tar --zstd -xf fixtures.tar.zst -C "fixtures/${FIXTURE_SET}" --strip-components=1
+          cat parts/"${FIXTURE_SET}".tar.zst.*.part |
+            tar --zstd -x -C "fixtures/${FIXTURE_SET}" --strip-components=1
+          rm -rf parts
           find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
 
       - name: Profile

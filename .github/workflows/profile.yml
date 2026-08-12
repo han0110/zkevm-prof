@@ -70,9 +70,6 @@ jobs:
           # a copy per branch would evict the fixture archives, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build the SP1 runner binary
-        run: bash .github/scripts/build-sp1-runner.sh
-
       - run: cargo build --release --locked
 
       # Only the archive is cached, keyed by the file id that identifies the corpus, so a rerun skips
@@ -145,9 +142,6 @@ jobs:
         with:
           shared-key: build
           save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      - name: Build the SP1 runner binary
-        run: bash .github/scripts/build-sp1-runner.sh
 
       - run: cargo build --release --locked
 

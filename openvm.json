@@ -9,7 +9,7 @@
     "rv64"
   ],
   "notes": [
-    "precompiles",
+    "Precompiles",
     "RISC-V instructions"
   ],
   "guests": [

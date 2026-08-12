@@ -5,14 +5,14 @@
   "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31561288378",
   "blocks": 1000,
   "kinds": [
-    "opcode",
     "syscall",
-    "system"
+    "system",
+    "opcode"
   ],
   "notes": [
-    "RISC-V instructions",
-    "precompiles",
-    "memory and lookup tables"
+    "Precompiles",
+    "Memory and tables",
+    "RISC-V instructions"
   ],
   "guests": [
     {
@@ -25,9 +25,9 @@
       "peak_heap_bytes": 26950612.032,
       "peak_heap_relative": 1.0,
       "components": [
-        122717227722403.0,
         33064215712808.0,
-        13214518602717.0
+        13214518602717.0,
+        122717227722403.0
       ]
     },
     {
@@ -40,9 +40,9 @@
       "peak_heap_bytes": 43289484.224,
       "peak_heap_relative": 1.6062523616383895,
       "components": [
-        97459097599423.0,
         33142639958921.0,
-        15842639750016.0
+        15842639750016.0,
+        97459097599423.0
       ]
     }
   ],

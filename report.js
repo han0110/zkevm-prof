@@ -321,7 +321,7 @@ function renderComposition(data) {
   }));
 
   let enabledKinds = new Set(data.kinds);
-  let showCost = false;
+  let showCost = true;
 
   const visibleTotal = (guest) =>
     data.kinds.reduce(

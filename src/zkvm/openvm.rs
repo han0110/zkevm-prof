@@ -39,7 +39,7 @@ pub const COMPOSITION: Composition = Composition {
     components: &[
         Kind {
             name: PRECOMPILE,
-            note: "precompiles",
+            note: "Precompiles",
         },
         Kind {
             name: RV64,

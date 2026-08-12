@@ -67,16 +67,16 @@ pub const COMPOSITION: Composition = Composition {
     total: "cost",
     components: &[
         Kind {
-            name: OPCODE,
-            note: "RISC-V instructions",
-        },
-        Kind {
             name: SYSCALL,
-            note: "precompiles",
+            note: "Precompiles",
         },
         Kind {
             name: SYSTEM,
-            note: "memory and lookup tables",
+            note: "Memory and tables",
+        },
+        Kind {
+            name: OPCODE,
+            note: "RISC-V instructions",
         },
     ],
 };

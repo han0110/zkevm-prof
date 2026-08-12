@@ -24,7 +24,7 @@
 
 <section class="card" id="cost-card">
   <h2>Overview</h2>
-  <p>Both figures are means over the profiled blocks, each beside its ratio to the smallest guest. Empirically cost gaps overstate proving time gaps, so take the relative figures as a reference rather than a proving time prediction. Peak heap is empty for a guest whose backend cannot read the heap.</p>
+  <p>Empirically cost gaps overstate proving time gaps, so take the cost relative as a reference rather than a proving time prediction.</p>
   <div class="scroller">
     <table id="cost">
       <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th data-sort="number">Avg cost</th><th data-sort="number">Avg peak heap</th><th>ELF</th></tr></thead>
@@ -35,20 +35,17 @@
 
 <section class="card hidden" id="composition-card">
   <h2>Cost composition</h2>
-  <p>Mean cost per block for each guest, split by the kinds that sum to it.</p>
   <div id="composition" class="chart"></div>
   <ul class="note" id="composition-note"></ul>
 </section>
 
 <section class="card" id="gas-card">
   <h2>Cost against Gas Usage</h2>
-  <p>Every profiled block against the gas it used.</p>
   <div id="gas" class="chart"></div>
 </section>
 
 <section class="card hidden" id="heap-card">
   <h2>Peak Heap against Gas Usage</h2>
-  <p>Peak bytes of heap the guest reached during each profiled block, against the gas that block used. Guests whose backend cannot read the heap are left out.</p>
   <div id="heap" class="chart"></div>
 </section>
 

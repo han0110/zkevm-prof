@@ -10,6 +10,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # OpenVM arrives as a git dependency whose submodule tree carries the whole of openssl. libgit2
+  # fails partway through a clone that size, so fetching goes through the git CLI instead.
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
   # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
   # install step below puts on PATH rather than the distribution clang.
   RVR_CC: clang-22
@@ -39,8 +42,9 @@ jobs:
     env:
       # A pull request profiles a tenth of the corpus, which catches a regression in the profiler
       # without spending hours per guest.
-      FIXTURE_FILE_ID: ${{ github.event_name == 'pull_request' && '1vG7JU-BV1QTRUU00doX99Ym4dHTYBoB0' || '1KMJJHKmnZrN1CQlFyiL-i69cx46H8Tr0' }}
       FIXTURE_SET: ${{ github.event_name == 'pull_request' && 'mainnet-25580000-100' || 'mainnet-25580000-1000' }}
+      # Release the corpora are published under, each as assets named after the set they hold.
+      FIXTURE_RELEASE: fixtures-mainnet-25580000
     strategy:
       fail-fast: false
       matrix:
@@ -70,33 +74,34 @@ jobs:
           # a copy per branch would evict the fixture archives, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build the SP1 runner binary
-        run: bash .github/scripts/build-sp1-runner.sh
+      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
+      # is retried apart from the compile, which needs no network of its own.
+      - name: Fetch dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then exit 0; fi
+            sleep 15
+          done
+          exit 1
 
       - run: cargo build --release --locked
 
-      # Only the archive is cached, keyed by the file id that identifies the corpus, so a rerun skips
-      # the Drive download. It has to stay on disk for the post-job save, which is why the download
-      # writes a file rather than piping into tar.
-      - name: Cache fixtures
-        id: fixtures
-        uses: actions/cache@v6
-        with:
-          path: fixtures.tar.zst
-          key: fixtures-${{ env.FIXTURE_FILE_ID }}
-
-      - name: Download fixtures
-        if: steps.fixtures.outputs.cache-hit != 'true'
+      # A corpus is published as split assets, since a release caps one asset at 2 GiB while leaving
+      # their number and total size free. The parts stream into tar rather than landing whole, which
+      # keeps a second copy off a disk the extracted corpus already fills. --strip-components=1 drops
+      # the archive's top-level directory so the fixtures land directly under fixtures/<set>.
+      - name: Download and extract fixtures
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          curl -fsSL -o fixtures.tar.zst \
-            "https://drive.usercontent.google.com/download?id=${FIXTURE_FILE_ID}&export=download&confirm=t"
-
-      # --strip-components=1 drops the archive's top-level directory so the fixtures land directly
-      # under fixtures/<set>.
-      - name: Extract fixtures
-        run: |
+          set -o pipefail
+          gh release download "${FIXTURE_RELEASE}" \
+            --pattern "${FIXTURE_SET}.tar.zst.*.part" --dir parts
           mkdir -p "fixtures/${FIXTURE_SET}"
-          tar --zstd -xf fixtures.tar.zst -C "fixtures/${FIXTURE_SET}" --strip-components=1
+          cat parts/"${FIXTURE_SET}".tar.zst.*.part |
+            tar --zstd -x -C "fixtures/${FIXTURE_SET}" --strip-components=1
+          rm -rf parts
           find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
 
       - name: Profile
@@ -146,8 +151,16 @@ jobs:
           shared-key: build
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build the SP1 runner binary
-        run: bash .github/scripts/build-sp1-runner.sh
+      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
+      # is retried apart from the compile, which needs no network of its own.
+      - name: Fetch dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then exit 0; fi
+            sleep 15
+          done
+          exit 1
 
       - run: cargo build --release --locked
 

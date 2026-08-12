@@ -11,6 +11,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  # OpenVM arrives as a git dependency whose submodule tree carries the whole of openssl. libgit2
+  # fails partway through a clone that size, so fetching goes through the git CLI instead.
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
   # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
   # install step below puts on PATH rather than the distribution clang.
   RVR_CC: clang-22
@@ -43,10 +46,18 @@ jobs:
           # archives, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build the SP1 runner binary
-        run: bash .github/scripts/build-sp1-runner.sh
-
       - run: cargo fmt --all --check
+
+      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
+      # is retried apart from the compile, which needs no network of its own.
+      - name: Fetch dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then exit 0; fi
+            sleep 15
+          done
+          exit 1
 
       - run: cargo clippy --release --all-targets --locked -- -D warnings
 

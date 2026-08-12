@@ -21,9 +21,9 @@ use crate::zkvm::{
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
 ///
-/// These are also the only rows read out of the emulator's report. `VARIABLE` is skipped because it
-/// is `TOTAL` less `BASE`, `FROPS` because it re-counts opcodes already priced under `OPCODES`, and
-/// `STEPS` because it counts work rather than pricing it.
+/// These name the only rows read out of the emulator's report. `VARIABLE` is skipped because it is
+/// `TOTAL` less `BASE`, `FROPS` because the emulator prices those instructions into an accumulator
+/// of their own that `TOTAL` never sums, and `STEPS` because it counts work rather than pricing it.
 pub const COMPOSITION: Composition = Composition {
     total: "total",
     components: &[
@@ -32,31 +32,43 @@ pub const COMPOSITION: Composition = Composition {
             note: "ROM and tables",
         },
         Kind {
-            name: "main",
-            note: "Main AIR",
+            name: "precompile",
+            note: "Precompiles",
         },
         Kind {
             name: "memory",
             note: "Memory",
         },
         Kind {
-            name: "opcodes",
+            name: "opcode",
             note: "ZisK instructions",
         },
         Kind {
-            name: "precompiles",
-            note: "precompiles",
+            name: "main",
+            note: "Main",
         },
     ],
 };
 
-/// The kinds [`COMPOSITION`] names, which are the report labels worth reading.
+/// The kinds [`COMPOSITION`] names, which are the ones worth reading out of the report.
 fn kinds() -> impl Iterator<Item = &'static str> {
     COMPOSITION
         .components
         .iter()
         .map(|kind| kind.name)
         .chain([COMPOSITION.total])
+}
+
+/// Row the emulator's report prints `kind` under.
+///
+/// The report names two of them in the plural where the cost map keys them in the singular, which is
+/// how the other backends key the same kinds.
+fn row(kind: &'static str) -> &'static str {
+    match kind {
+        "opcode" => "opcodes",
+        "precompile" => "precompiles",
+        kind => kind,
+    }
 }
 
 /// Symbols the ZisK linker script delimits the guest heap with.
@@ -144,7 +156,7 @@ fn parse(report: &str) -> Result<Cost> {
             continue;
         };
         let (Some(kind), Ok(value)) = (
-            kinds().find(|kind| label.eq_ignore_ascii_case(kind)),
+            kinds().find(|kind| label.eq_ignore_ascii_case(row(kind))),
             value.parse::<u64>(),
         ) else {
             continue;
@@ -152,7 +164,10 @@ fn parse(report: &str) -> Result<Cost> {
         cost.entry(kind.to_owned()).or_insert(value);
     }
 
-    let missing: Vec<&str> = kinds().filter(|kind| !cost.contains_key(*kind)).collect();
+    let missing: Vec<&str> = kinds()
+        .filter(|kind| !cost.contains_key(*kind))
+        .map(row)
+        .collect();
     if !missing.is_empty() {
         bail!("the emulator report is missing {}", missing.join(", "));
     }
@@ -198,12 +213,12 @@ mod tests {
     fn cost_is_read_from_the_report() {
         let cost = parse(REPORT).unwrap();
         assert_eq!(cost["main"], 5799084064);
-        assert_eq!(cost["opcodes"], 1378944808);
-        assert_eq!(cost["precompiles"], 1947067046);
+        assert_eq!(cost["opcode"], 1378944808);
+        assert_eq!(cost["precompile"], 1947067046);
         assert_eq!(cost["memory"], 766637533);
         assert_eq!(cost["base"], 293601280);
         assert_eq!(cost["total"], 10185334731);
-        // Rows that are derived, re-counted or not costs at all stay out.
+        // Rows that are derived, priced apart from the total, or not costs at all stay out.
         for skipped in ["variable", "frops", "steps"] {
             assert!(!cost.contains_key(skipped), "{skipped} was recorded");
         }

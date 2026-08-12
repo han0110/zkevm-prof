@@ -73,23 +73,32 @@ jobs:
           # a copy per branch would evict the fixture archives, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
+      # is retried apart from the compile, which needs no network of its own.
+      - name: Fetch dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then exit 0; fi
+            sleep 15
+          done
+          exit 1
+
       - run: cargo build --release --locked
 
-      # Only the archive is cached, keyed by the file id that identifies the corpus, so a rerun skips
-      # the Drive download. It has to stay on disk for the post-job save, which is why the download
-      # writes a file rather than piping into tar.
-      - name: Cache fixtures
-        id: fixtures
-        uses: actions/cache@v6
-        with:
-          path: fixtures.tar.zst
-          key: fixtures-${{ env.FIXTURE_FILE_ID }}
-
+      # Drive answers a refusal with a page rather than a status, so a failed download arrives as
+      # HTML that only fails once tar reads it. The magic bytes name the corpus as the problem here
+      # instead.
       - name: Download fixtures
-        if: steps.fixtures.outputs.cache-hit != 'true'
         run: |
           curl -fsSL -o fixtures.tar.zst \
             "https://drive.usercontent.google.com/download?id=${FIXTURE_FILE_ID}&export=download&confirm=t"
+          if [ "$(od -An -tx1 -N4 fixtures.tar.zst | tr -d ' \n')" != "28b52ffd" ]; then
+            echo "the corpus download is not a zstd archive, which is what Drive serves when it"
+            echo "refuses the file. The first bytes are:"
+            head -c 200 fixtures.tar.zst
+            exit 1
+          fi
 
       # --strip-components=1 drops the archive's top-level directory so the fixtures land directly
       # under fixtures/<set>.
@@ -145,6 +154,17 @@ jobs:
         with:
           shared-key: build
           save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
+      # is retried apart from the compile, which needs no network of its own.
+      - name: Fetch dependencies
+        run: |
+          for attempt in 1 2 3; do
+            if cargo fetch --locked; then exit 0; fi
+            sleep 15
+          done
+          exit 1
 
       - run: cargo build --release --locked
 

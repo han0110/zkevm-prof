@@ -23,10 +23,10 @@ zisk-core = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alp
 ziskemu = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
 
 # openvm
-openvm-sdk = { git = "https://github.com/han0110/openvm.git", branch = "patch/v2.1.0-preview", features = ["rvr"] }
-openvm-sdk-config = { git = "https://github.com/han0110/openvm.git", branch = "patch/v2.1.0-preview" }
+openvm-sdk = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462", features = ["rvr"] }
+openvm-sdk-config = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
 openvm-stark-sdk = { git = "https://github.com/han0110/stark-backend.git", branch = "patch/v2.1.0-preview" }
-openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "patch/v2.1.0-preview" }
+openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
 
 # sp1
 enum-map = "2"

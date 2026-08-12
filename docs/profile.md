@@ -189,9 +189,10 @@ One limit is worth knowing. Memory an allocator reserved but the guest never tou
 because nothing distinguishes it from memory that was never handed out, so a guest that bumps its
 cursor over pages it never writes reads lower than its allocator would claim. Only the two ends of
 the reading are exposed to this, since zeros between them are covered by the span, and the reading
-otherwise sits within a page of the truth. Measured against the cursors the ZisK and OpenVM guests
-happen to keep, the shortfall runs from 4 to 224 bytes, and SP1's page granular reading overshoots
-by under 1.5 KiB.
+otherwise sits within a page of the truth. Measured over a thousand blocks per guest against the
+cursors the ZisK and OpenVM guests happen to keep, the shortfall is 4 bytes for most of them and
+reaches 7904 in the worst case, while SP1's page granular reading overshoots by at most 2060. The
+median across every guest and block is 4 bytes.
 
 SP1 reaches its heap differently. Its executor serves guest memory a word at a time and its heap
 spans 110 GiB, too wide to read as a slice, so the backend drives the transpiler that executor wraps

@@ -10,6 +10,9 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # OpenVM arrives as a git dependency whose submodule tree carries the whole of openssl. libgit2
+  # fails partway through a clone that size, so fetching goes through the git CLI instead.
+  CARGO_NET_GIT_FETCH_WITH_CLI: true
   # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
   # install step below puts on PATH rather than the distribution clang.
   RVR_CC: clang-22

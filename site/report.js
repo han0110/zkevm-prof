@@ -18,7 +18,7 @@ const THEME = {
 /* Slot orders, not 1..8: adjacent pairs have to stay apart under colour-blind simulation, and the
    two charts start on different hues so their first series never share a colour. */
 const KIND_COLORS = [1, 6, 2, 7, 5, 3, 8, 4].map((step) => token('--cat-' + step));
-const LINE_COLORS = [6, 1, 7, 2].map((step) => token('--cat-' + step));
+const LINE_COLORS = [6, 1, 7, 2, 3, 5, 8, 4].map((step) => token('--cat-' + step));
 
 const at = (palette, index) => palette[index % palette.length];
 
@@ -443,10 +443,10 @@ function renderComposition(data) {
 }
 
 /* Cost and peak heap are both one value per block against the gas that block used, so one chart
-   draws either, differing only in what `format` prints the value as. Colour is keyed on `order`
-   rather than on the row, since a guest missing from one chart would otherwise shift every guest
-   below it onto another guest's colour. */
-function renderLines(id, lines, scale, order) {
+   draws either, differing only in what `format` prints the value as. Colour is looked up by label
+   rather than taken from the row, since a guest missing from one chart would otherwise shift every
+   guest below it onto another guest's colour. */
+function renderLines(id, lines, scale, colors) {
   const points = lines.reduce((all, line) => all.concat(line.points), []);
   const ceiling = scale.ceiling(Math.max.apply(null, points.map((point) => point[1])));
 
@@ -526,7 +526,7 @@ function renderLines(id, lines, scale, order) {
     },
     // A point per block, so markers stay hidden until the axis pointer picks one out.
     series: lines.map((line) => {
-      const color = at(LINE_COLORS, order.indexOf(line.label));
+      const color = colors[line.label];
       return {
         name: line.label,
         type: 'line',
@@ -550,13 +550,50 @@ function renderLines(id, lines, scale, order) {
 const COST_SCALE = { format: si, ceiling: niceMax };
 const HEAP_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
 
-/* Guest order the colours are keyed on, shared by both line charts. */
-const guestOrder = (data) => data.guests.map((guest) => guest.label);
+/* Stateless validators the registry names, in the order they take their colour in. A series is
+   coloured by the guest behind it rather than by its place in a tab's list, so a guest reads the same
+   on every tab and switching zkVMs never repaints it. Sorting the union of the zkVMs' entries keys
+   the order on the registry's content alone, so no tab has to load before another for a guest to come
+   out the same colour. */
+let statelessValidators = [];
+
+/* Fetched once before the first tab draws. A page served without the registry beside it leaves the
+   list empty rather than failing, which still colours every guest and still colours it the same on
+   every tab, and gives up only the guarantee that two named guests stay apart. */
+async function fetchStatelessValidators() {
+  try {
+    const response = await fetch('elf-registry.json', { cache: 'no-store' });
+    const registry = response.ok ? await response.json() : {};
+    const names = Object.values(registry).flatMap((entries) =>
+      entries.map((entry) => entry['stateless-validator'])
+    );
+    return Array.from(new Set(names)).sort();
+  } catch {
+    return [];
+  }
+}
+
+/* A guest outside the registry, which is what a report published before it was listed carries, takes
+   one of the slots the registry leaves free, drawn from its own name so it too comes out the same
+   colour on every tab. */
+function guestSlot(name) {
+  const named = statelessValidators.indexOf(name);
+  if (named >= 0) return named;
+  const free = Math.max(LINE_COLORS.length - statelessValidators.length, 1);
+  const letters = Array.from(name).reduce((sum, letter) => sum + letter.charCodeAt(0), 0);
+  return statelessValidators.length + (letters % free);
+}
+
+/* Colour per series label, shared by both line charts. */
+const guestColors = (data) =>
+  Object.fromEntries(
+    data.guests.map((guest) => [guest.label, at(LINE_COLORS, guestSlot(guest.guest))])
+  );
 
 /* A tab is published by its own run, so a report written before the cost lines were named apart
    from the heap ones still loads, read under the key it carries. */
 function renderGas(data) {
-  return renderLines('gas', data.cost_lines ?? data.lines, COST_SCALE, guestOrder(data));
+  return renderLines('gas', data.cost_lines ?? data.lines, COST_SCALE, guestColors(data));
 }
 
 /* A report written before peak heap was recorded, or one whose zkVM cannot read it, carries no heap
@@ -569,7 +606,7 @@ function renderHeap(data) {
     return null;
   }
   card.classList.remove('hidden');
-  return renderLines('heap', lines, HEAP_SCALE, guestOrder(data));
+  return renderLines('heap', lines, HEAP_SCALE, guestColors(data));
 }
 
 function render(data) {
@@ -671,6 +708,9 @@ window.addEventListener('keydown', (event) => {
 });
 
 buildTabs();
-select(ZKVMS.includes(location.hash.slice(1)) ? location.hash.slice(1) : ZKVMS[0]);
+fetchStatelessValidators().then((names) => {
+  statelessValidators = names;
+  select(ZKVMS.includes(location.hash.slice(1)) ? location.hash.slice(1) : ZKVMS[0]);
+});
 
 window.addEventListener('resize', () => charts.forEach((chart) => chart.resize()));

@@ -124,6 +124,13 @@ below the image and runs the heap from `_end` to the end of its address space. A
 symbol its zkVM delimits the heap with fails the run, since a guest quietly absent from the heap chart
 reads as one that allocates nothing.
 
+Whether the input buffer counts toward the reading follows the same layout. OpenVM reads it into a
+vector the guest allocates, which is the first allocation the guest makes and so sits at the bottom of
+the heap. SP1 puts it in a region reserved above the heap and ZisK in one of its own outside RAM, and
+a guest reads either in place, so on neither does the buffer reach the heap. Decoding it then
+allocates structures holding its contents whichever zkVM runs, so no figure here is the heap less its
+input.
+
 Most of what separates one zkVM's figure from another's for the same program is the allocator that
 zkVM's toolchain links. An allocator that never reuses memory makes the machine hold everything ever
 allocated, while one that recycles holds only the peak its arena reached, and the reading follows that
@@ -136,9 +143,17 @@ reading are exposed to this, since zeros between them are covered by the span, a
 otherwise sits within a page of the truth.
 
 SP1 reaches its heap differently. Its executor serves guest memory a word at a time and its heap spans
-110 GiB, too wide to read as a slice, so the backend drives the transpiler that executor wraps and
-reads the memfd the resulting JIT runs the guest against. The pages that file holds are the pages the
-guest reached and the kernel reports them by seeking between data and holes, which makes the reading
-page granular where the others are byte exact. The last page of the span is left out, since the
-allocator SP1 links caps its pool there before the guest starts. That JIT exists only on x86_64 Linux
-and the reading goes with it, so a build for any other target records no heap on SP1.
+110 GiB of address space, too wide to read as a slice, so the backend drives the transpiler that
+executor wraps and reads the memfd the resulting JIT runs the guest against. The pages that file holds
+are the pages the guest reached and the kernel reports them by seeking between data and holes, which
+makes the reading page granular where the others are byte exact. That span is address space rather
+than memory, since a page the guest never reached is a hole the file never materialises.
+
+Where that heap ends is read off the same walk rather than taken from the ceiling the runtime was
+built with, which reaches neither the guest ELF nor the executor and so cannot be checked against the
+artifact being profiled. SP1 reserves a region for the input directly above the heap and reads the
+input into its base, so the topmost region a run wrote is that input, found by matching the bytes the
+profiler handed over, and the heap is every region below it. Whatever an allocator writes to cap its
+pool is excluded with the page the input region opens with, so no allocator is assumed. That JIT
+exists only on x86_64 Linux and the reading goes with it, so a build for any other target records no
+heap on SP1.

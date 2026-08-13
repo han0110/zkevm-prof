@@ -171,10 +171,12 @@ jobs:
           path: profiles
 
       # The page is static and loads one JSON per zkVM, so publishing copies the site next to a
-      # report named after the zkVM this run profiled.
+      # report named after the zkVM this run profiled. The registry goes with them, since the page
+      # fetches it for the guest list it colours a series by.
       - name: Report
         run: |
           cp -r site publish
+          cp elf-registry.json publish/
           ./target/release/zkevm-prof report --input profiles/*.json --output "publish/${{ inputs.zkvm }}.json"
           ./target/release/zkevm-prof report --input profiles/*.json --output report.md --format md
           cat report.md >> "${GITHUB_STEP_SUMMARY}"

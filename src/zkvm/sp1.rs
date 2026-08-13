@@ -23,6 +23,13 @@
 //! measured against a heap it does not have. The runtime reserves a region for the input directly
 //! above the heap and reads the input into its base, which makes the topmost written region of a run
 //! that input and the heap everything below it.
+//!
+//! Peak stack comes out of the same file and is simpler to place. The runtime starts the stack
+//! pointer at a ceiling of its own and the loader rejects an ELF carrying a segment below it, so
+//! everything the file holds under that ceiling is stack and the lowest page of it is the deepest
+//! the guest went. That holds only for a guest linked to begin at the ceiling, which the profiler
+//! checks rather than assumes, since a guest linked higher carries its whole stack above the ceiling
+//! and would read as one that never touched it.
 
 use std::sync::Arc;
 
@@ -37,8 +44,9 @@ use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler};
 
 #[cfg(sp1_jit_memory)]
 use {
-    crate::zkvm::heap_symbol,
+    crate::zkvm::region_symbol,
     anyhow::{Context, ensure},
+    sp1_primitives::consts::STACK_TOP,
     std::ops::Range,
 };
 
@@ -102,6 +110,13 @@ struct Charges {
     exit_code: u64,
 }
 
+/// Peaks one run reached, absent where guest memory stays behind the executor.
+#[derive(Default)]
+struct Peaks {
+    heap_bytes: Option<u64>,
+    stack_bytes: Option<u64>,
+}
+
 pub struct SP1Profiler {
     program: Arc<Program>,
     opts: SP1CoreOpts,
@@ -115,9 +130,17 @@ pub struct SP1Profiler {
 impl SP1Profiler {
     pub fn new(elf: &[u8]) -> Result<Self> {
         #[cfg(sp1_jit_memory)]
-        let heap_bottom = heap_symbol(elf, HEAP_BOTTOM)?;
+        let heap_bottom = region_symbol(elf, HEAP_BOTTOM)?;
         let program = Program::from(elf)
             .map_err(|error| anyhow!("failed to disassemble the guest ELF: {error}"))?;
+        // The stack is read down from the runtime's own ceiling, which reaches neither the guest ELF
+        // nor the executor, so the artifact is held to beginning there.
+        #[cfg(sp1_jit_memory)]
+        ensure!(
+            program.memory_image.keys().min() == Some(&STACK_TOP),
+            "the guest image does not begin at the {STACK_TOP:#x} its runtime starts the stack \
+             pointer at, so its stack does not lie where this reading looks for it"
+        );
         Ok(Self {
             program: Arc::new(program),
             opts: SP1CoreOpts::default(),
@@ -171,14 +194,14 @@ impl SP1Profiler {
         Ok(())
     }
 
-    /// Runs the guest over the whole minimal trace, charging every chunk and reading the heap the
+    /// Runs the guest over the whole minimal trace, charging every chunk and reading the memory the
     /// run left behind.
     ///
     /// Driving the transpiler is what the executor does, with the JIT it builds kept behind a
     /// private field. Holding it here instead reaches the memory the guest ran against, and leaves
     /// the charging untouched, since the chunks and the program are the same either way.
     #[cfg(sp1_jit_memory)]
-    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Peaks)> {
         use std::os::fd::AsRawFd;
 
         use memmap2::MmapMut;
@@ -210,16 +233,21 @@ impl SP1Profiler {
             self.charge_chunk(&chunk, &mut charges)?;
         }
 
-        let peak_heap_bytes =
-            peak_heap_bytes(jit.memory.as_raw_fd(), self.heap_bottom, stateless_input)?;
-        Ok((charges, peak_heap_bytes))
+        let memory = jit.memory.as_raw_fd();
+        Ok((
+            charges,
+            Peaks {
+                heap_bytes: peak_heap_bytes(memory, self.heap_bottom, stateless_input)?,
+                stack_bytes: peak_stack_bytes(memory)?,
+            },
+        ))
     }
 
     /// Runs the guest over the whole minimal trace, charging every chunk.
     ///
-    /// Guest memory stays behind the executor here, so no heap is read.
+    /// Guest memory stays behind the executor here, so no heap or stack is read.
     #[cfg(not(sp1_jit_memory))]
-    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Peaks)> {
         use sp1_core_executor::MinimalExecutorEnum;
 
         let mut executor = MinimalExecutorEnum::new(
@@ -238,8 +266,34 @@ impl SP1Profiler {
         {
             self.charge_chunk(&chunk, &mut charges)?;
         }
-        Ok((charges, None))
+        Ok((charges, Peaks::default()))
     }
+}
+
+/// File offset the guest memory holds `whence` at from `offset` on, absent where it holds none.
+#[cfg(sp1_jit_memory)]
+fn seek(memory: i32, offset: u64, whence: i32) -> Result<Option<u64>> {
+    // Safety: the descriptor belongs to the mapping the caller still holds, and seeking a file that
+    // has no data left past `offset` reports ENXIO rather than failing the process.
+    let found = unsafe { libc::lseek(memory, offset as i64, whence) };
+    match found {
+        0.. => Ok(Some(found as u64)),
+        _ if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENXIO) => Ok(None),
+        _ => Err(std::io::Error::last_os_error()).context("failed to seek the guest memory"),
+    }
+}
+
+/// Peak stack in bytes, from the pages the file behind guest memory holds below the ceiling the
+/// runtime starts the stack pointer at, absent when it holds none there.
+///
+/// The loader rejects a guest ELF carrying a segment below that ceiling and the runtime places both
+/// the heap and the input above it, so every page the file holds under it is stack and the lowest of
+/// them is the deepest the guest went. A page holds 2048 guest bytes, which is what the depth rounds
+/// up by.
+#[cfg(sp1_jit_memory)]
+fn peak_stack_bytes(memory: i32) -> Result<Option<u64>> {
+    let deepest = seek(memory, 0, libc::SEEK_DATA)?.filter(|data| *data < 2 * STACK_TOP);
+    Ok(deepest.map(|deepest| STACK_TOP - deepest / 2))
 }
 
 /// Peak heap in bytes, from the pages the file behind guest memory holds over the heap, absent when
@@ -254,21 +308,10 @@ impl SP1Profiler {
 fn peak_heap_bytes(memory: i32, heap_bottom: u64, stateless_input: &[u8]) -> Result<Option<u64>> {
     // The file holds two host words per guest word, the clock it was last touched at and the guest's
     // own value, so a guest address reaches it doubled.
-    let seek = |offset: u64, whence: i32| -> Result<Option<u64>> {
-        // Safety: the descriptor belongs to the mapping the caller still holds, and seeking a file
-        // that has no data left past `offset` reports ENXIO rather than failing the process.
-        let found = unsafe { libc::lseek(memory, offset as i64, whence) };
-        match found {
-            0.. => Ok(Some(found as u64)),
-            _ if std::io::Error::last_os_error().raw_os_error() == Some(libc::ENXIO) => Ok(None),
-            _ => Err(std::io::Error::last_os_error()).context("failed to seek the guest memory"),
-        }
-    };
-
     let mut written: Vec<Range<u64>> = Vec::new();
     let mut position = 2 * heap_bottom;
-    while let Some(data) = seek(position, libc::SEEK_DATA)? {
-        let hole = seek(data, libc::SEEK_HOLE)?
+    while let Some(data) = seek(memory, position, libc::SEEK_DATA)? {
+        let hole = seek(memory, data, libc::SEEK_HOLE)?
             .expect("a file holding data at an offset holds a hole past it");
         written.push(data..hole);
         position = hole;
@@ -343,7 +386,7 @@ fn head(memory: i32, at: u64) -> Result<[u8; ANCHOR]> {
 
 impl Profiler for SP1Profiler {
     fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
-        let (charges, peak_heap_bytes) = self.run(stateless_input)?;
+        let (charges, peaks) = self.run(stateless_input)?;
         if charges.exit_code != 0 {
             bail!("the guest exited with {}", charges.exit_code);
         }
@@ -368,7 +411,8 @@ impl Profiler for SP1Profiler {
                 (SYSTEM.to_owned(), charges.system),
                 (COMPOSITION.total.to_owned(), cost),
             ]),
-            peak_heap_bytes,
+            peak_heap_bytes: peaks.heap_bytes,
+            peak_stack_bytes: peaks.stack_bytes,
         })
     }
 }

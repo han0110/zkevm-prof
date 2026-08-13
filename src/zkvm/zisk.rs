@@ -5,8 +5,9 @@
 //! sets, and the resulting distribution is read back from the emulator in process rather than by
 //! shelling out.
 //!
-//! Peak heap comes out of the same run. The emulator keeps the whole guest RAM until it is dropped,
-//! so the heap the ZisK linker script delimits is still there to read once the run is over.
+//! Peak heap and peak stack come out of the same run. The emulator keeps the whole guest RAM until
+//! it is dropped, so the regions the ZisK linker script delimits are still there to read once the
+//! run is over.
 
 use std::ops::Range;
 
@@ -16,7 +17,7 @@ use zisk_core::{RAM_ADDR, RAM_SIZE, Riscv2zisk, ZiskRom};
 use ziskemu::{Emu, EmuOptions};
 
 use crate::zkvm::{
-    Composition, Cost, Execution, Kind, Profiler, heap_range, heap_symbol, peak_heap_bytes,
+    Composition, Cost, Execution, Kind, Profiler, region_range, region_symbol, written_span,
 };
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
@@ -71,15 +72,19 @@ fn row(kind: &'static str) -> &'static str {
     }
 }
 
-/// Symbols the ZisK linker script delimits the guest heap with.
+/// Symbols the ZisK linker script delimits the guest stack and heap with.
 ///
-/// The stack sits between the guest image and the heap, growing down from `_kernel_heap_bottom`, so
-/// `_end` marks the bottom of the stack rather than of the heap.
+/// The stack sits between the guest image `_end` closes and the heap, growing down from the
+/// `_init_stack_top` the entrypoint loads into `sp`.
+const STACK_BOTTOM: &str = "_end";
+const STACK_TOP: &str = "_init_stack_top";
 const HEAP_BOTTOM: &str = "_kernel_heap_bottom";
 const HEAP_TOP: &str = "_kernel_heap_top";
 
 pub struct ZiskProfiler {
     rom: ZiskRom,
+    /// Guest addresses the stack covers.
+    stack: Range<u64>,
     /// Guest addresses the heap covers.
     heap: Range<u64>,
 }
@@ -89,16 +94,19 @@ impl ZiskProfiler {
         let rom = Riscv2zisk::new(elf)
             .run()
             .map_err(|error| anyhow!("failed to transpile the ELF into a ZisK ROM: {error}"))?;
-        let heap = heap_range(elf, HEAP_BOTTOM, heap_symbol(elf, HEAP_TOP)?)?;
+        let stack = region_range(elf, STACK_BOTTOM, region_symbol(elf, STACK_TOP)?)?;
+        let heap = region_range(elf, HEAP_BOTTOM, region_symbol(elf, HEAP_TOP)?)?;
         // `Mem::read_slice` panics rather than failing on a range it holds no one section for, so
         // the RAM section bounds what the emulator can be asked for.
-        ensure!(
-            RAM_ADDR <= heap.start && heap.end <= RAM_ADDR + RAM_SIZE,
-            "the guest puts its heap at {:#x}..{:#x}, outside the RAM the emulator holds",
-            heap.start,
-            heap.end
-        );
-        Ok(Self { rom, heap })
+        for (name, region) in [("stack", &stack), ("heap", &heap)] {
+            ensure!(
+                RAM_ADDR <= region.start && region.end <= RAM_ADDR + RAM_SIZE,
+                "the guest puts its {name} at {:#x}..{:#x}, outside the RAM the emulator holds",
+                region.start,
+                region.end
+            );
+        }
+        Ok(Self { rom, stack, heap })
     }
 }
 
@@ -120,15 +128,14 @@ impl Profiler for ZiskProfiler {
         }
         emu.ctx.stats.set_use_thousands_sep(false);
         let cost = parse(&emu.ctx.stats.report(&self.rom))?;
-        // The emulator holds the whole RAM in one buffer, so the heap comes back as a slice of it.
-        let heap = emu
-            .ctx
-            .inst_ctx
-            .mem
-            .read_slice(self.heap.start, self.heap.end - self.heap.start);
+        // The emulator holds the whole RAM in one buffer, so each region comes back as a slice of
+        // it.
+        let mem = &emu.ctx.inst_ctx.mem;
+        let read = |region: &Range<u64>| mem.read_slice(region.start, region.end - region.start);
         Ok(Execution {
             cost,
-            peak_heap_bytes: peak_heap_bytes(heap),
+            peak_heap_bytes: written_span(read(&self.heap)),
+            peak_stack_bytes: written_span(read(&self.stack)),
         })
     }
 }

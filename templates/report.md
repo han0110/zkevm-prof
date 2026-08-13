@@ -33,3 +33,14 @@ Mean of the peaks a guest reached over the corpus.
 | {{ guest.label }} | {{ guest.version }} | {{ guest.peak }} | {{ guest.relative }} |
 {% endfor -%}
 {% endif -%}
+{% if !view.stack.is_empty() %}
+## Peak stack
+
+Mean of the deepest point a guest's call stack reached over the corpus.
+
+| Guest | Version | Avg peak stack | Relative |
+| --- | --- | ---: | ---: |
+{% for guest in view.stack -%}
+| {{ guest.label }} | {{ guest.version }} | {{ guest.peak }} | {{ guest.relative }} |
+{% endfor -%}
+{% endif -%}

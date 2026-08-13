@@ -5,7 +5,7 @@ own price for the execution rather than wall clock time, so it reproduces on any
 across guests that ran the same blocks.
 
 Nothing in the method depends on how a guest is written. A backend prices whatever program it is
-handed and reads the heap that program left behind, so every guest on one zkVM is measured alike.
+handed and reads the memory that program left behind, so every guest on one zkVM is measured alike.
 
 ```sh
 cargo build --release
@@ -35,8 +35,9 @@ written to exercise and the ones before it only build the state it runs against.
 several tests contributes one entry per test.
 
 The output pairs the per-test costs with the zkVM that produced them, which is how a reader knows what
-a cost map's kinds mean. An entry also carries `peak_heap_bytes` on a zkVM whose backend reads the
-heap, and omits the field where none was read rather than recording a heap of nothing.
+a cost map's kinds mean. An entry also carries `peak_heap_bytes` and `peak_stack_bytes` on a zkVM
+whose backend reads those regions, and omits a field where none was read rather than recording a
+region of nothing.
 
 ```json
 {
@@ -44,6 +45,7 @@ heap, and omits the field where none was read rather than recording a heap of no
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
       "cost": { "precompile": 7154852252, "rv64": 10994655178, "cost": 18149507430 },
       "peak_heap_bytes": 57531938,
+      "peak_stack_bytes": 68074,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
   },
@@ -157,3 +159,26 @@ profiler handed over, and the heap is every region below it. Whatever an allocat
 pool is excluded with the page the input region opens with, so no allocator is assumed. That JIT
 exists only on x86_64 Linux and the reading goes with it, so a build for any other target records no
 heap on SP1.
+
+## Peak stack
+
+Peak stack is the same span read over a different region, since a returning frame leaves its bytes
+behind exactly as a freed allocation does. Where the stack lies is again derived per zkVM. ZisK grows
+it down from the `_init_stack_top` its entrypoint loads into `sp`, over the space between there and
+the `_end` the guest image closes at. OpenVM seats the image above the stack instead and grows it
+down from `STACK_TOP` to the bottom of guest memory. An OpenVM guest is linked with no script, so the
+linker seats its ELF header and program headers inside that window and the transpiler loads them into
+guest memory before the guest runs, which the reading blanks out rather than counting as stack.
+
+SP1 puts the stack below the guest image, which it links to begin at the ceiling its entrypoint
+starts the stack pointer at. Its loader rejects an ELF carrying a segment below that ceiling, so
+everything the memfd holds under it is stack and the lowest page of it is the deepest the guest went.
+It accepts one linked above the ceiling, though, whose stack would then sit out of reach of this
+reading entirely, so a guest that does not begin where the stack does fails the run rather than
+reporting a stack it never had. That file is the one the heap comes from and exists only on x86_64
+Linux, so a build for any other target records no stack either.
+
+The SP1 figure is therefore a different reading rather than the same one taken coarser. It counts
+every page the guest touched, a frame it left zero included, while ZisK and OpenVM count only the
+bytes left non-zero and read a frame of zeros as never reached. Comparing a guest's stack across
+zkVMs compares the readings as much as the guests.

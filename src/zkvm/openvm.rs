@@ -10,13 +10,14 @@
 //! over the AIRs an execution charges and the weights are the caller's, so zeroing the rest leaves
 //! exactly the cells one kind contributes.
 //!
-//! Peak heap comes out of the same runs. Metered cost stubs the memory model out of the pricing but
-//! still runs the guest against real memory, so the state a run returns holds the heap the guest
-//! wrote.
+//! Peak heap and peak stack come out of the same runs. Metered cost stubs the memory model out of
+//! the pricing but still runs the guest against real memory, so the state a run returns holds the
+//! memory the guest wrote.
 
 use std::ops::Range;
 
-use anyhow::{Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, ensure};
+use elf::{ElfBytes, abi::PT_LOAD, endian::AnyEndian};
 use openvm_sdk::{
     Sdk, StdIn,
     compiled::MeteredCostInstance,
@@ -25,9 +26,12 @@ use openvm_sdk::{
 };
 use openvm_sdk_config::SdkVmConfig;
 use openvm_stark_sdk::config::{MAX_APP_LOG_STACKED_HEIGHT, app_params_with_100_bits_security};
-use openvm_transpiler::{elf::Elf, openvm_platform::memory::MEM_SIZE};
+use openvm_transpiler::{
+    elf::Elf,
+    openvm_platform::memory::{GUEST_MIN_MEM, MEM_SIZE, STACK_TOP},
+};
 
-use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler, heap_range, peak_heap_bytes};
+use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler, region_range, written_span};
 
 /// Cost kinds that partition an OpenVM total, in stack order, and the kind holding the whole.
 ///
@@ -93,6 +97,14 @@ const SEGMENT_MAX_MEMORY: usize = 29 << 29; // 14.5 GiB
 /// from here to the end of the address space.
 const HEAP_BOTTOM: &str = "_end";
 
+/// Guest addresses the stack covers, from the bottom of guest memory up to the `sp` the entrypoint
+/// starts it at.
+///
+/// `openvm_platform` seats the guest image above the stack, so the window holds nothing but stack
+/// and the headers [`loaded_in_stack`] takes out of the reading. A guest cannot outgrow it without
+/// leaving guest memory altogether.
+const STACK: Range<u64> = GUEST_MIN_MEM as u64..STACK_TOP;
+
 pub struct OpenVMProfiler {
     /// Priced with every AIR width, which is the cost OpenVM's own metered cost mode reports.
     whole: MeteredCostInstance<'static>,
@@ -104,13 +116,16 @@ pub struct OpenVMProfiler {
     ctx: MeteredCostCtx,
     /// Guest addresses the heap covers.
     heap: Range<u64>,
+    /// Parts of [`STACK`] the guest image occupies, which its span leaves out.
+    loaded_in_stack: Vec<Range<u64>>,
 }
 
 impl OpenVMProfiler {
     pub fn new(elf: &[u8]) -> Result<Self> {
         // Resolved before the ELF is decoded, since decoding keeps the memory image and drops the
         // symbol table the heap is delimited in.
-        let heap = heap_range(elf, HEAP_BOTTOM, MEM_SIZE as u64)?;
+        let heap = region_range(elf, HEAP_BOTTOM, MEM_SIZE as u64)?;
+        let loaded_in_stack = loaded_in_stack(elf)?;
         let elf = Elf::decode(elf, MEM_SIZE as u32)
             .map_err(|error| anyhow!("failed to decode the guest ELF: {error}"))?;
         // The SDK holds a transpiler behind `Rc`, so it cannot be shared across threads and cannot
@@ -178,41 +193,51 @@ impl OpenVMProfiler {
             priced,
             ctx,
             heap,
+            loaded_in_stack,
         })
     }
 
-    /// Runs `instance`, returning its cost and, when `read_heap` is set, the peak heap the run left
-    /// behind.
+    /// Runs `instance`, returning its cost and, when `read_memory` is set, the peak heap and the
+    /// peak stack the run left behind.
     ///
     /// Every artifact runs the same program and differs only in the widths it charges, so they all
-    /// leave the same heap and reading it once is reading it for all of them.
+    /// leave the same memory and reading it once is reading it for all of them.
     fn execute(
         &self,
         instance: &MeteredCostInstance<'static>,
         stdin: &StdIn,
-        read_heap: bool,
-    ) -> Result<(u64, Option<u64>)> {
+        read_memory: bool,
+    ) -> Result<(u64, Option<u64>, Option<u64>)> {
         // `Sdk::execute_metered_cost` wraps this call to also read the guest's public values, which
         // a cost profile does not report. Going through the artifact keeps the SDK off the worker
         // threads, since only the artifact is shareable.
         let (ctx, state) = instance
             .execute_metered_cost(stdin.clone(), self.ctx.clone())
             .map_err(|error| anyhow!("metered cost execution failed: {error}"))?;
-        if !read_heap {
-            return Ok((ctx.cost, None));
+        if !read_memory {
+            return Ok((ctx.cost, None, None));
         }
         // The compiled artifact runs against the state's own buffer, so the memory it hands back is
         // the one the guest wrote and a guest byte address is a byte offset into the RISC-V address
         // space.
-        let heap = state
-            .memory
-            .checked_u8_slice(
-                RV64_MEMORY_AS,
-                self.heap.start,
-                self.heap.end - self.heap.start,
-            )
-            .map_err(|error| anyhow!("failed to read the guest's heap: {error}"))?;
-        Ok((ctx.cost, peak_heap_bytes(heap)))
+        let read = |region: &Range<u64>| {
+            state
+                .memory
+                .checked_u8_slice(RV64_MEMORY_AS, region.start, region.end - region.start)
+                .map_err(|error| anyhow!("failed to read the guest's memory: {error}"))
+        };
+        // The image the transpiler loads into the stack window is not stack, so the span is taken
+        // over a copy of the window holding it blanked out.
+        let mut stack = read(&STACK)?.to_vec();
+        self.loaded_in_stack.iter().for_each(|loaded| {
+            stack[(loaded.start - STACK.start) as usize..(loaded.end - STACK.start) as usize]
+                .fill(0)
+        });
+        Ok((
+            ctx.cost,
+            written_span(read(&self.heap)?),
+            written_span(&stack),
+        ))
     }
 }
 
@@ -228,7 +253,7 @@ impl Profiler for OpenVMProfiler {
 
         // The kinds leave out the AIRs no instruction can charge, so kinds that fall short of the
         // whole cost mean one of them took a row after all.
-        let (total, peak_heap_bytes) = self.execute(&self.whole, &stdin, true)?;
+        let (total, peak_heap_bytes, peak_stack_bytes) = self.execute(&self.whole, &stdin, true)?;
         let summed: u64 = cost.values().sum();
         ensure!(
             summed == total,
@@ -240,8 +265,31 @@ impl Profiler for OpenVMProfiler {
         Ok(Execution {
             cost,
             peak_heap_bytes,
+            peak_stack_bytes,
         })
     }
+}
+
+/// Parts of [`STACK`] the guest ELF loads into.
+///
+/// A guest is linked with no script, so the linker seats the ELF header and the program headers
+/// wherever it likes and lands them in the window the stack grows down through. The transpiler loads
+/// every `PT_LOAD` segment into guest memory, which puts those bytes there before the guest runs, a
+/// word at a time and so up to the word a segment's memory size ends in.
+fn loaded_in_stack(elf: &[u8]) -> Result<Vec<Range<u64>>> {
+    let elf = ElfBytes::<AnyEndian>::minimal_parse(elf)
+        .map_err(|error| anyhow!("failed to parse the guest ELF: {error}"))?;
+    Ok(elf
+        .segments()
+        .context("the guest ELF carries no program headers")?
+        .iter()
+        .filter(|segment| segment.p_type == PT_LOAD)
+        .filter_map(|segment| {
+            let start = segment.p_vaddr.max(STACK.start);
+            let end = (segment.p_vaddr + segment.p_memsz.next_multiple_of(4)).min(STACK.end);
+            (start < end).then_some(start..end)
+        })
+        .collect())
 }
 
 /// The kind an AIR is priced under, from the name the proving key records it as, or `None` for the

@@ -29,6 +29,8 @@ struct Block {
     components: Vec<f64>,
     /// Absent for a guest whose backend cannot read the heap it used.
     peak_heap_bytes: Option<f64>,
+    /// Absent for a guest whose backend cannot read the stack it used.
+    peak_stack_bytes: Option<f64>,
     gas_used: u64,
     number: u64,
 }
@@ -218,6 +220,7 @@ fn build_series(
             total,
             components,
             peak_heap_bytes: entry.peak_heap_bytes.map(|peak| peak as f64),
+            peak_stack_bytes: entry.peak_stack_bytes.map(|peak| peak as f64),
             gas_used: entry.metadata.gas_used,
             number: entry.metadata.block_number,
         });
@@ -257,6 +260,8 @@ struct Report {
     /// Peak heap per block, carrying only the guests whose backend can read it. Empty drops the
     /// section from the page, as an empty composition drops the composition chart.
     heap_lines: Vec<ReportLine>,
+    /// Peak stack per block, carried the same way.
+    stack_lines: Vec<ReportLine>,
 }
 
 #[derive(Serialize)]
@@ -270,6 +275,9 @@ struct ReportGuest {
     /// Absent for a guest whose backend cannot read the heap, which leaves its cell empty.
     peak_heap_bytes: Option<f64>,
     peak_heap_relative: Option<f64>,
+    /// Absent for a guest whose backend cannot read the stack, which leaves its cell empty.
+    peak_stack_bytes: Option<f64>,
+    peak_stack_relative: Option<f64>,
     components: Vec<f64>,
 }
 
@@ -292,11 +300,6 @@ impl Report {
             .iter()
             .map(|guest| guest.total)
             .fold(f64::INFINITY, f64::min);
-        let peaks: Vec<Option<f64>> = series.iter().map(peak_heap).collect();
-        let smallest = peaks
-            .iter()
-            .flatten()
-            .fold(f64::INFINITY, |smallest, peak| smallest.min(*peak));
         Self {
             zkvm: zkvm.to_string(),
             zkvm_version: zkvm_version.to_owned(),
@@ -318,21 +321,33 @@ impl Report {
                 .collect(),
             guests: series
                 .iter()
-                .zip(&peaks)
-                .map(|(guest, peak)| ReportGuest {
-                    label: guest.label.clone(),
-                    guest: guest.guest.clone(),
-                    guest_version: guest.guest_version.clone(),
-                    elf_url: guest.elf_url.clone(),
-                    total: guest.total,
-                    relative: guest.total / cheapest,
-                    peak_heap_bytes: *peak,
-                    peak_heap_relative: peak.map(|peak| peak / smallest),
-                    components: guest.components.clone(),
-                })
+                .zip(peaks(series, |block| block.peak_heap_bytes))
+                .zip(peaks(series, |block| block.peak_stack_bytes))
+                .map(
+                    |((guest, (heap, heap_relative)), (stack, stack_relative))| ReportGuest {
+                        label: guest.label.clone(),
+                        guest: guest.guest.clone(),
+                        guest_version: guest.guest_version.clone(),
+                        elf_url: guest.elf_url.clone(),
+                        total: guest.total,
+                        relative: guest.total / cheapest,
+                        peak_heap_bytes: heap,
+                        peak_heap_relative: heap_relative,
+                        peak_stack_bytes: stack,
+                        peak_stack_relative: stack_relative,
+                        components: guest.components.clone(),
+                    },
+                )
                 .collect(),
             cost_lines: series.iter().map(cost_line).collect(),
-            heap_lines: series.iter().filter_map(heap_line).collect(),
+            heap_lines: series
+                .iter()
+                .filter_map(|guest| peak_line(guest, |block| block.peak_heap_bytes))
+                .collect(),
+            stack_lines: series
+                .iter()
+                .filter_map(|guest| peak_line(guest, |block| block.peak_stack_bytes))
+                .collect(),
         }
     }
 }
@@ -350,13 +365,13 @@ fn cost_line(series: &Series) -> ReportLine {
     }
 }
 
-/// The same for peak heap, or nothing when no block in the series carries one.
-fn heap_line(series: &Series) -> Option<ReportLine> {
+/// The same for the peak `of` reads, or nothing when no block in the series carries one.
+fn peak_line(series: &Series, of: fn(&Block) -> Option<f64>) -> Option<ReportLine> {
     let mut blocks: Vec<&Block> = series.blocks.iter().collect();
     blocks.sort_by_key(|block| block.gas_used);
     let points: Vec<(f64, f64, u64)> = blocks
         .iter()
-        .filter_map(|block| Some((block.gas_used as f64, block.peak_heap_bytes?, block.number)))
+        .filter_map(|block| Some((block.gas_used as f64, of(block)?, block.number)))
         .collect();
     (!points.is_empty()).then(|| ReportLine {
         label: series.label.clone(),
@@ -370,7 +385,8 @@ struct View {
     zkvm_version: String,
     kinds: Vec<Legend>,
     guests: Vec<Guest>,
-    heap: Vec<Heap>,
+    heap: Vec<Peak>,
+    stack: Vec<Peak>,
 }
 
 /// A kind's column header and the note printed under the table.
@@ -392,9 +408,9 @@ struct Component {
     share: String,
 }
 
-/// One guest's peak heap, carried only for the guests whose profile recorded one, as `heap_lines`
-/// carries them for the page.
-struct Heap {
+/// One guest's mean peak in a region, carried only for the guests whose profile recorded one, as
+/// `heap_lines` and `stack_lines` carry them for the page.
+struct Peak {
     label: String,
     version: String,
     peak: String,
@@ -411,14 +427,6 @@ impl View {
         let cheapest = series
             .iter()
             .map(|guest| guest.total)
-            .fold(f64::INFINITY, f64::min);
-        let peaks: Vec<(&Series, f64)> = series
-            .iter()
-            .filter_map(|guest| Some((guest, peak_heap(guest)?)))
-            .collect();
-        let smallest = peaks
-            .iter()
-            .map(|(_, peak)| *peak)
             .fold(f64::INFINITY, f64::min);
         Self {
             blocks,
@@ -450,32 +458,57 @@ impl View {
                         .collect(),
                 })
                 .collect(),
-            heap: peaks
-                .iter()
-                .map(|(guest, peak)| Heap {
-                    label: guest.label.clone(),
-                    version: guest.guest_version.clone(),
-                    peak: bytes(*peak),
-                    relative: format!("{:.2}x", peak / smallest),
-                })
-                .collect(),
+            heap: peak_rows(series, |block| block.peak_heap_bytes),
+            stack: peak_rows(series, |block| block.peak_stack_bytes),
         }
     }
 }
 
-/// The mean peak heap over the blocks the series recorded one for, or nothing when it recorded none.
+/// The rows a peak table prints, dropping the guests whose profile recorded none.
+fn peak_rows(series: &[Series], of: fn(&Block) -> Option<f64>) -> Vec<Peak> {
+    series
+        .iter()
+        .zip(peaks(series, of))
+        .filter_map(|(guest, (peak, relative))| {
+            Some(Peak {
+                label: guest.label.clone(),
+                version: guest.guest_version.clone(),
+                peak: bytes(peak?),
+                relative: format!("{:.2}x", relative?),
+            })
+        })
+        .collect()
+}
+
+/// The mean of the peak `of` reads over the blocks the series recorded one for, or nothing when it
+/// recorded none.
 ///
 /// A mean rather than the largest, since one figure per guest is there to compare how much memory
-/// the corpus takes them rather than to size a machine for their worst block. Ratios are taken
-/// between the means rather than averaged per block, which keeps them reading the same whichever
-/// guest they are stated against.
-fn peak_heap(series: &Series) -> Option<f64> {
+/// the corpus takes them rather than to size a machine for their worst block.
+fn mean_peak(series: &Series, of: fn(&Block) -> Option<f64>) -> Option<f64> {
     let (sum, count) = series
         .blocks
         .iter()
-        .filter_map(|block| block.peak_heap_bytes)
+        .filter_map(of)
         .fold((0.0, 0u32), |(sum, count), peak| (sum + peak, count + 1));
     (count > 0).then(|| sum / f64::from(count))
+}
+
+/// Each series' mean peak beside its ratio to the smallest, both absent for a series that recorded
+/// no peak.
+///
+/// Ratios are taken between the means rather than averaged per block, which keeps them reading the
+/// same whichever guest they are stated against.
+fn peaks(series: &[Series], of: fn(&Block) -> Option<f64>) -> Vec<(Option<f64>, Option<f64>)> {
+    let peaks: Vec<Option<f64>> = series.iter().map(|guest| mean_peak(guest, of)).collect();
+    let smallest = peaks
+        .iter()
+        .flatten()
+        .fold(f64::INFINITY, |smallest, peak| smallest.min(*peak));
+    peaks
+        .iter()
+        .map(|peak| (*peak, peak.map(|peak| peak / smallest)))
+        .collect()
 }
 
 /// Formats a magnitude with an SI suffix, which keeps costs past 10^10 readable.
@@ -507,7 +540,49 @@ struct MarkdownReport<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes, si};
+    use crate::command::report::{Block, Series, bytes, peaks, si};
+
+    /// A series of two blocks carrying the given heap and stack peaks, with the fields the ranking
+    /// does not read left empty.
+    fn series(label: &str, blocks: [(f64, f64); 2]) -> Series {
+        Series {
+            label: label.to_owned(),
+            guest: label.to_owned(),
+            guest_version: String::new(),
+            elf_url: None,
+            blocks: blocks
+                .iter()
+                .map(|(heap, stack)| Block {
+                    total: 0.0,
+                    components: Vec::new(),
+                    peak_heap_bytes: Some(*heap),
+                    peak_stack_bytes: Some(*stack),
+                    gas_used: 0,
+                    number: 0,
+                })
+                .collect(),
+            total: 0.0,
+            components: Vec::new(),
+        }
+    }
+
+    /// Heap and stack are ranked by one implementation, so each has to come out against the smallest
+    /// of the region it reads rather than of whichever region ran first.
+    #[test]
+    fn each_region_is_ranked_against_its_own_smallest() {
+        let series = [
+            series("a", [(400.0, 30.0), (600.0, 50.0)]),
+            series("b", [(100.0, 60.0), (300.0, 140.0)]),
+        ];
+        assert_eq!(
+            peaks(&series, |block| block.peak_heap_bytes),
+            [(Some(500.0), Some(2.5)), (Some(200.0), Some(1.0))]
+        );
+        assert_eq!(
+            peaks(&series, |block| block.peak_stack_bytes),
+            [(Some(40.0), Some(1.0)), (Some(100.0), Some(2.5))]
+        );
+    }
 
     #[test]
     fn magnitudes_carry_an_si_suffix() {

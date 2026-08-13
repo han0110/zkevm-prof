@@ -27,7 +27,7 @@
   <p>Empirically cost gaps overstate proving time gaps, so take the cost relative as a reference rather than a proving time prediction.</p>
   <div class="scroller">
     <table id="cost">
-      <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th data-sort="number">Avg cost</th><th data-sort="number">Avg peak heap</th><th>ELF</th></tr></thead>
+      <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th data-sort="number">Avg cost</th><th data-sort="number">Avg peak heap</th><th data-sort="number">Avg peak stack</th><th>ELF</th></tr></thead>
       <tbody></tbody>
     </table>
   </div>
@@ -47,6 +47,11 @@
 <section class="card hidden" id="heap-card">
   <h2>Peak Heap against Gas Usage</h2>
   <div id="heap" class="chart"></div>
+</section>
+
+<section class="card hidden" id="stack-card">
+  <h2>Peak Stack against Gas Usage</h2>
+  <div id="stack" class="chart"></div>
 </section>
 
 <p id="error" hidden></p>

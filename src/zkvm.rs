@@ -20,51 +20,56 @@ use crate::fixture::Metadata;
 /// Cost of one execution, keyed by the cost kinds the zkVM defines.
 pub type Cost = BTreeMap<String, u64>;
 
-/// What one execution of a guest cost, and the heap it used.
+/// What one execution of a guest cost, and the memory it used.
 #[derive(Debug)]
 pub struct Execution {
     pub cost: Cost,
     /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
     /// left its heap untouched.
     pub peak_heap_bytes: Option<u64>,
+    /// Peak bytes of stack the guest reached, absent where the backend read no stack or the guest
+    /// left its stack untouched.
+    pub peak_stack_bytes: Option<u64>,
 }
 
-/// Address the guest ELF gives `symbol`, which a guest whose zkVM delimits its heap with it carries.
+/// Address the guest ELF gives `symbol`, which a guest whose zkVM delimits a region of its memory
+/// with it carries.
 ///
-/// A missing symbol is an error rather than a heap of nothing, since a guest quietly absent from the
-/// heap chart reads as one that allocates nothing at all.
-pub fn heap_symbol(elf: &[u8], symbol: &str) -> Result<u64> {
-    symbol_address(elf, symbol)?
-        .with_context(|| format!("the guest ELF carries no {symbol}, which delimits its heap"))
+/// A missing symbol is an error rather than a region of nothing, since a guest quietly absent from
+/// the chart of a region reads as one that never reached into it.
+pub fn region_symbol(elf: &[u8], symbol: &str) -> Result<u64> {
+    symbol_address(elf, symbol)?.with_context(|| {
+        format!("the guest ELF carries no {symbol}, which delimits a region of its memory")
+    })
 }
 
-/// Guest addresses the heap covers, from the `start` symbol its zkVM's toolchain marks the bottom
+/// Guest addresses a region covers, from the `start` symbol its zkVM's toolchain marks the bottom
 /// with and the `end` that zkVM stops it at.
 ///
-/// Which symbol marks the bottom is a property of the toolchain rather than of the guest, so every
-/// guest built for one zkVM is delimited alike however it allocates.
-pub fn heap_range(elf: &[u8], start: &str, end: u64) -> Result<Range<u64>> {
-    let start = heap_symbol(elf, start)?;
+/// Which symbol marks a bottom is a property of the toolchain rather than of the guest, so every
+/// guest built for one zkVM is delimited alike however it uses the region.
+pub fn region_range(elf: &[u8], start: &str, end: u64) -> Result<Range<u64>> {
+    let start = region_symbol(elf, start)?;
     ensure!(
         start < end,
-        "the guest starts its heap at {start:#x}, past the {end:#x} its zkVM ends it at"
+        "the guest starts a region at {start:#x}, past the {end:#x} its zkVM ends it at"
     );
     Ok(start..end)
 }
 
-/// Peak heap in bytes, from the heap `bytes` a run left behind, absent when the guest left the whole
-/// heap zero.
+/// Peak bytes of a region, from the `bytes` a run left behind in it, absent when the guest left the
+/// whole region zero.
 ///
-/// Guest memory starts zeroed and an allocator hands memory back without zeroing it, so the bytes
-/// left non-zero are the ones the guest reached and no allocator has to cooperate for them to be
-/// read. Taking the span between the outermost of them rather than the distance from the heap's
-/// bottom reads the same whether memory is handed out from the bottom up or from the top down.
-pub fn peak_heap_bytes(bytes: &[u8]) -> Option<u64> {
+/// Guest memory starts zeroed and neither an allocator nor a returning frame zeroes what it gives
+/// up, so the bytes left non-zero are the ones the guest reached and nothing has to cooperate for
+/// them to be read. Taking the span between the outermost of them rather than the distance from the
+/// region's bottom reads the same whether it is filled from the bottom up or from the top down.
+pub fn written_span(bytes: &[u8]) -> Option<u64> {
     let highest = bytes.iter().rposition(|byte| *byte != 0)?;
     let lowest = bytes
         .iter()
         .position(|byte| *byte != 0)
-        .expect("a heap holding a highest non-zero byte holds a lowest one");
+        .expect("a region holding a highest non-zero byte holds a lowest one");
     Some((highest - lowest + 1) as u64)
 }
 
@@ -168,38 +173,42 @@ pub struct Entry {
     /// left its heap untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_heap_bytes: Option<u64>,
+    /// Peak bytes of stack the guest reached, absent where the backend read no stack or the guest
+    /// left its stack untouched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_stack_bytes: Option<u64>,
     pub metadata: Metadata,
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::zkvm::peak_heap_bytes;
+    use crate::zkvm::written_span;
 
-    /// A heap handed out from the bottom up and the same heap handed out from the top down read
-    /// alike, which is what lets one reading serve allocators that grow in either direction.
+    /// A region filled from the bottom up and the same region filled from the top down read alike,
+    /// which is what lets one reading serve a heap and a stack alike.
     #[test]
     fn the_span_between_the_outermost_bytes_is_the_peak() {
         let mut upward = [0u8; 64];
         upward[..10].copy_from_slice(&[1; 10]);
-        assert_eq!(peak_heap_bytes(&upward), Some(10));
+        assert_eq!(written_span(&upward), Some(10));
 
         let mut downward = [0u8; 64];
         downward[54..].copy_from_slice(&[1; 10]);
-        assert_eq!(peak_heap_bytes(&downward), Some(10));
+        assert_eq!(written_span(&downward), Some(10));
     }
 
     /// Zeros a guest wrote read as untouched, so the span is what the outermost non-zero bytes
     /// enclose rather than the count of them.
     #[test]
     fn the_span_covers_the_zeros_between_the_outermost_bytes() {
-        let mut heap = [0u8; 64];
-        (heap[0], heap[41]) = (1, 1);
-        assert_eq!(peak_heap_bytes(&heap), Some(42));
+        let mut region = [0u8; 64];
+        (region[0], region[41]) = (1, 1);
+        assert_eq!(written_span(&region), Some(42));
     }
 
     #[test]
-    fn an_untouched_heap_is_no_reading_rather_than_an_empty_one() {
-        assert_eq!(peak_heap_bytes(&[0; 64]), None);
-        assert_eq!(peak_heap_bytes(&[]), None);
+    fn an_untouched_region_is_no_reading_rather_than_an_empty_one() {
+        assert_eq!(written_span(&[0; 64]), None);
+        assert_eq!(written_span(&[]), None);
     }
 }

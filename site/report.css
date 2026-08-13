@@ -192,18 +192,20 @@ h1 {
 }
 
 /* Columns are fixed so a tab carrying different names and row counts cannot reshape the table, and
-   sized to their own widest value or heading rather than to the card, which five short columns would
-   otherwise stretch across. A sorted column also carries an arrow, which the two figure columns hold
-   room for so ordering by one does not push its heading into the column beside it. */
+   sized to their own widest value or heading rather than to the card, which six short columns would
+   otherwise stretch across. A sorted column also carries an arrow, which the three figure columns
+   hold room for so ordering by one does not push its heading into the column beside it. */
 #cost {
   /* Pixel widths, carried unitless so each column can be stated as its share of their sum. */
   --col-guest: 167;
   --col-version: 92;
   --col-total: 123;
   --col-heap: 141;
+  --col-stack: 148;
   --col-elf: 38;
   --col-sum: calc(
-    var(--col-guest) + var(--col-version) + var(--col-total) + var(--col-heap) + var(--col-elf)
+    var(--col-guest) + var(--col-version) + var(--col-total) + var(--col-heap) + var(--col-stack) +
+      var(--col-elf)
   );
   --cell-gap: 16px;
   --row-hover: rgb(48 37 27 / 0.4);
@@ -231,6 +233,10 @@ h1 {
 }
 
 #cost th:nth-child(5) {
+  width: calc(var(--col-stack) / var(--col-sum) * 100%);
+}
+
+#cost th:nth-child(6) {
   width: calc(var(--col-elf) / var(--col-sum) * 100%);
 }
 
@@ -317,8 +323,8 @@ h1 {
   /* Stops at the table's own right edge, which a narrow card would otherwise let it run past and
      widen the page by, hovered or not. */
   max-width: calc(
-    (var(--col-version) + var(--col-total) + var(--col-heap) + var(--col-elf)) / var(--col-version) *
-      100% - var(--cell-gap)
+    (var(--col-version) + var(--col-total) + var(--col-heap) + var(--col-stack) + var(--col-elf)) /
+      var(--col-version) * 100% - var(--cell-gap)
   );
   padding-right: 12px;
   overflow: hidden;

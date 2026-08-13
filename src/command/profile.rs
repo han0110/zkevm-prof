@@ -152,6 +152,7 @@ impl ProfileCmd {
                             Entry {
                                 cost: execution.cost,
                                 peak_heap_bytes: execution.peak_heap_bytes,
+                                peak_stack_bytes: execution.peak_stack_bytes,
                                 metadata: fixture.metadata,
                             },
                         ))

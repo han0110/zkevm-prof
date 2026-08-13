@@ -39,7 +39,8 @@ function si(value) {
   return value.toFixed(0);
 }
 
-/* Peak heap is a memory figure, which reads in binary units while a cost reads in decimal ones. */
+/* Peak heap and peak stack are memory figures, which read in binary units while a cost reads in
+   decimal ones. */
 function bytes(value) {
   const steps = [[1024 ** 3, 'GiB'], [1024 ** 2, 'MiB'], [1024, 'KiB']];
   for (const step of steps) {
@@ -66,7 +67,7 @@ function niceMax(value) {
   return Math.ceil(value / step) * step;
 }
 
-/* The binary counterpart, so a heap axis lands on round KiB, MiB or GiB rather than on the decimal
+/* The binary counterpart, so a memory axis lands on round KiB, MiB or GiB rather than on the decimal
    ceiling its labels would then print as arbitrary fractions. */
 function niceBytes(value) {
   const unit = [1024 ** 3, 1024 ** 2, 1024, 1].find((step) => value >= step) ?? 1;
@@ -288,6 +289,7 @@ function renderTable(data) {
       // already carried as. Dividing every guest by the same count leaves the ratio beside it whole.
       figureCell(guest.total / data.blocks, guest.relative, si) +
       figureCell(guest.peak_heap_bytes, guest.peak_heap_relative, bytes) +
+      figureCell(guest.peak_stack_bytes, guest.peak_stack_relative, bytes) +
       elfCell(guest) +
       '</tr>'
     )
@@ -442,10 +444,10 @@ function renderComposition(data) {
   return chart;
 }
 
-/* Cost and peak heap are both one value per block against the gas that block used, so one chart
-   draws either, differing only in what `format` prints the value as. Colour is looked up by label
-   rather than taken from the row, since a guest missing from one chart would otherwise shift every
-   guest below it onto another guest's colour. */
+/* Cost, peak heap and peak stack are each one value per block against the gas that block used, so
+   one chart draws any of them, differing only in what `format` prints the value as. Colour is looked
+   up by label rather than taken from the row, since a guest missing from one chart would otherwise
+   shift every guest below it onto another guest's colour. */
 function renderLines(id, lines, scale, colors) {
   const points = lines.reduce((all, line) => all.concat(line.points), []);
   const ceiling = scale.ceiling(Math.max.apply(null, points.map((point) => point[1])));
@@ -548,7 +550,7 @@ function renderLines(id, lines, scale, colors) {
 /* How a chart prints its values, where it rounds its axis up to, and how many marks it splits into
    when the default split would not land on round labels. */
 const COST_SCALE = { format: si, ceiling: niceMax };
-const HEAP_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
+const MEMORY_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
 
 /* Stateless validators the registry names, in the order they take their colour in. A series is
    coloured by the guest behind it rather than by its place in a tab's list, so a guest reads the same
@@ -584,7 +586,7 @@ function guestSlot(name) {
   return statelessValidators.length + (letters % free);
 }
 
-/* Colour per series label, shared by both line charts. */
+/* Colour per series label, shared by every line chart. */
 const guestColors = (data) =>
   Object.fromEntries(
     data.guests.map((guest) => [guest.label, at(LINE_COLORS, guestSlot(guest.guest))])
@@ -596,25 +598,28 @@ function renderGas(data) {
   return renderLines('gas', data.cost_lines ?? data.lines, COST_SCALE, guestColors(data));
 }
 
-/* A report written before peak heap was recorded, or one whose zkVM cannot read it, carries no heap
-   line and the page drops the section rather than drawing an empty chart. */
-function renderHeap(data) {
-  const lines = data.heap_lines ?? [];
-  const card = document.getElementById('heap-card');
+/* A report written before the region was recorded, or one whose zkVM cannot read it, carries no line
+   for it and the page drops the section rather than drawing an empty chart. */
+function renderMemory(id, lines, data) {
+  const card = document.getElementById(id + '-card');
   if (!lines.length) {
     card.classList.add('hidden');
     return null;
   }
   card.classList.remove('hidden');
-  return renderLines('heap', lines, HEAP_SCALE, guestColors(data));
+  return renderLines(id, lines, MEMORY_SCALE, guestColors(data));
 }
+
+const renderHeap = (data) => renderMemory('heap', data.heap_lines ?? [], data);
+
+const renderStack = (data) => renderMemory('stack', data.stack_lines ?? [], data);
 
 function render(data) {
   clearCharts();
   renderRun(data);
   renderTable(data);
   // Collected as they are built, so a chart that throws still leaves the earlier ones disposable.
-  [renderComposition, renderGas, renderHeap].forEach((draw) => {
+  [renderComposition, renderGas, renderHeap, renderStack].forEach((draw) => {
     const chart = draw(data);
     if (chart) charts.push(chart);
   });
@@ -622,9 +627,11 @@ function render(data) {
 
 function showError(message) {
   clearCharts();
-  ['run-card', 'cost-card', 'composition-card', 'gas-card', 'heap-card'].forEach((id) => {
-    document.getElementById(id).classList.add('hidden');
-  });
+  ['run-card', 'cost-card', 'composition-card', 'gas-card', 'heap-card', 'stack-card'].forEach(
+    (id) => {
+      document.getElementById(id).classList.add('hidden');
+    }
+  );
   const error = document.getElementById('error');
   error.textContent = message;
   error.hidden = false;

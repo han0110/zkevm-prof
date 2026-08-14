@@ -1,8 +1,8 @@
 {
   "zkvm": "openvm",
   "zkvm_version": "v2.1.0-preview",
-  "generated_at": 1786546512,
-  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31599388725",
+  "generated_at": 1786688096,
+  "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/31773454123",
   "blocks": 1000,
   "kinds": [
     "precompile",

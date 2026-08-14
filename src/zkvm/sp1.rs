@@ -17,6 +17,12 @@
 //! that file holds are the pages the guest reached, which the kernel reports by seeking between
 //! data and holes. Reaching that file means driving the transpiler the executor wraps, which is why
 //! the reading is confined to the targets that executor compiles a native JIT for.
+//!
+//! Where that heap ends is read off the run rather than assumed. The ceiling `sp1-zkvm` builds with
+//! reaches neither the guest ELF nor the executor, so a guest built against another one would be
+//! measured against a heap it does not have. The runtime reserves a region for the input directly
+//! above the heap and reads the input into its base, which makes the topmost written region of a run
+//! that input and the heap everything below it.
 
 use std::sync::Arc;
 
@@ -30,7 +36,11 @@ use sp1_core_executor::{
 use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler};
 
 #[cfg(sp1_jit_memory)]
-use {crate::zkvm::heap_range, anyhow::Context, std::ops::Range};
+use {
+    crate::zkvm::heap_symbol,
+    anyhow::{Context, ensure},
+    std::ops::Range,
+};
 
 /// Symbol the linker ends the guest image at, which `sp1_zkvm` starts the heap at.
 ///
@@ -39,26 +49,15 @@ use {crate::zkvm::heap_range, anyhow::Context, std::ops::Range};
 #[cfg(sp1_jit_memory)]
 const HEAP_BOTTOM: &str = "_end";
 
-/// Address `sp1_zkvm` ends the guest heap at, which is `MAX_MEMORY` less the input region it
-/// reserves above it.
-///
-/// Both come from the guest's own build and reach neither its ELF nor its executor, so this tracks
-/// the defaults `sp1-zkvm` builds with rather than anything the profiled artifact declares.
-#[cfg(sp1_jit_memory)]
-const HEAP_TOP: u64 = (1 << 37) - (1 << 34);
-
-/// Bytes at the top of the heap an allocator caps its pool with, which it writes before the guest
-/// starts and which therefore say nothing about the block.
-///
-/// The allocator `sp1_zkvm` links puts a sentinel block header in the last 32 bytes of the span it
-/// claims. Leaving out that much of a span of 110 GiB costs no reading a guest could produce.
-#[cfg(sp1_jit_memory)]
-const POOL_CAP: u64 = 32;
-
-/// Host page, which is the granularity guest memory reports data at and so the granularity the pool
-/// cap has to be left out at.
+/// Host page, which is the granularity guest memory reports data at and so the granularity the heap
+/// is separated from the input region above it at.
 #[cfg(sp1_jit_memory)]
 const HOST_PAGE: u64 = 4096;
+
+/// Bytes of the input matched against the region they are expected to occupy, which is what holds a
+/// guest to the layout this reading splits the heap on.
+#[cfg(sp1_jit_memory)]
+const ANCHOR: usize = 64;
 
 /// Cost kinds that partition an SP1 total, in stack order, and the kind holding the whole.
 pub const COMPOSITION: Composition = Composition {
@@ -108,15 +107,15 @@ pub struct SP1Profiler {
     opts: SP1CoreOpts,
     /// What one row of each AIR costs, which is the gas formula's two weightings already blended.
     weights: EnumMap<RiscvAirId, u64>,
-    /// Guest addresses the heap covers.
+    /// Guest address the heap starts at. Where it ends is read off each run instead.
     #[cfg(sp1_jit_memory)]
-    heap: Range<u64>,
+    heap_bottom: u64,
 }
 
 impl SP1Profiler {
     pub fn new(elf: &[u8]) -> Result<Self> {
         #[cfg(sp1_jit_memory)]
-        let heap = heap_range(elf, HEAP_BOTTOM, HEAP_TOP)?;
+        let heap_bottom = heap_symbol(elf, HEAP_BOTTOM)?;
         let program = Program::from(elf)
             .map_err(|error| anyhow!("failed to disassemble the guest ELF: {error}"))?;
         Ok(Self {
@@ -124,7 +123,7 @@ impl SP1Profiler {
             opts: SP1CoreOpts::default(),
             weights: weights(),
             #[cfg(sp1_jit_memory)]
-            heap,
+            heap_bottom,
         })
     }
 
@@ -211,7 +210,8 @@ impl SP1Profiler {
             self.charge_chunk(&chunk, &mut charges)?;
         }
 
-        let peak_heap_bytes = peak_heap_bytes(jit.memory.as_raw_fd(), &self.heap)?;
+        let peak_heap_bytes =
+            peak_heap_bytes(jit.memory.as_raw_fd(), self.heap_bottom, stateless_input)?;
         Ok((charges, peak_heap_bytes))
     }
 
@@ -246,14 +246,14 @@ impl SP1Profiler {
 /// it holds none.
 ///
 /// A page the guest never reached was never written and so is a hole the file skips, which makes
-/// the outermost data it holds the outermost the guest reached. The allocator's own cap on its pool
-/// is left out, since it is written before the guest starts and sits at the very top of the heap,
-/// where it would otherwise fix every reading at the whole span.
+/// the outermost data it holds the outermost the guest reached. The topmost written region is the
+/// input the runtime reserves space for above the heap, so the heap is every region below it and
+/// nothing an allocator writes to cap its pool is counted, that landing in the page the input region
+/// opens with rather than in a region of its own.
 #[cfg(sp1_jit_memory)]
-fn peak_heap_bytes(memory: i32, heap: &Range<u64>) -> Result<Option<u64>> {
-    // The file holds two host words per guest word, the guest's value and the clock it was last
-    // touched at, so a guest address reaches it doubled.
-    let cap = (2 * (HEAP_TOP - POOL_CAP)) / HOST_PAGE * HOST_PAGE;
+fn peak_heap_bytes(memory: i32, heap_bottom: u64, stateless_input: &[u8]) -> Result<Option<u64>> {
+    // The file holds two host words per guest word, the clock it was last touched at and the guest's
+    // own value, so a guest address reaches it doubled.
     let seek = |offset: u64, whence: i32| -> Result<Option<u64>> {
         // Safety: the descriptor belongs to the mapping the caller still holds, and seeking a file
         // that has no data left past `offset` reports ENXIO rather than failing the process.
@@ -265,18 +265,80 @@ fn peak_heap_bytes(memory: i32, heap: &Range<u64>) -> Result<Option<u64>> {
         }
     };
 
-    let (mut position, mut reached) = (2 * heap.start, None::<Range<u64>>);
-    while position < cap {
-        let Some(data) = seek(position, libc::SEEK_DATA)?.filter(|data| *data < cap) else {
-            break;
-        };
+    let mut written: Vec<Range<u64>> = Vec::new();
+    let mut position = 2 * heap_bottom;
+    while let Some(data) = seek(position, libc::SEEK_DATA)? {
         let hole = seek(data, libc::SEEK_HOLE)?
-            .expect("a file holding data at an offset holds a hole past it")
-            .min(cap);
-        reached = Some(reached.map_or(data..hole, |reached: Range<u64>| reached.start..hole));
+            .expect("a file holding data at an offset holds a hole past it");
+        written.push(data..hole);
         position = hole;
     }
-    Ok(reached.map(|reached| (reached.end - 1) / 2 - reached.start / 2 + 1))
+
+    let input = written
+        .pop()
+        .context("the guest wrote nothing above its image, so it read no input")?;
+    // The runtime opens its input region on a page and the input has to fit in what the region
+    // holds, which leaves only the pages between its start and its end less that length to look on.
+    let padded = (stateless_input.len() as u64).next_multiple_of(8);
+    let last = input
+        .end
+        .checked_sub(2 * padded)
+        .filter(|last| *last >= input.start)
+        .context("the topmost region the guest wrote is shorter than the input it was handed")?;
+    let anchor = &stateless_input[..ANCHOR.min(stateless_input.len())];
+    let base = (input.start..=last)
+        .step_by(HOST_PAGE as usize)
+        .map(|at| head(memory, at).map(|head| (at, head)))
+        .find_map(|read| match read {
+            Ok((at, head)) => (head[..anchor.len()] == *anchor).then_some(Ok(at)),
+            Err(error) => Some(Err(error)),
+        })
+        .transpose()?
+        .context(
+            "the guest holds no input where the runtime reserves room for it, so the heap this \
+             reading takes to lie below cannot be told apart from it",
+        )?;
+    // Only what an allocator writes to cap its pool separates the two, and it is excluded with the
+    // page it lands on. More than that between them would be heap this reading then drops.
+    ensure!(
+        base - input.start <= HOST_PAGE,
+        "the guest wrote {} bytes below its input, more than the page an allocator caps its pool \
+         with, so the heap does not end where this reading splits it",
+        (base - input.start) / 2
+    );
+
+    let (Some(first), Some(last)) = (written.first(), written.last()) else {
+        return Ok(None);
+    };
+    Ok(Some((last.end - 1) / 2 - first.start / 2 + 1))
+}
+
+/// The guest's own bytes at the file offset `at`, which has to be word aligned.
+///
+/// Every guest word reaches the file as the clock it was last touched at followed by the word's own
+/// value, so the guest's bytes are the second half of each sixteen byte record.
+#[cfg(sp1_jit_memory)]
+fn head(memory: i32, at: u64) -> Result<[u8; ANCHOR]> {
+    let mut records = [0u8; 2 * ANCHOR];
+    // Safety: the descriptor belongs to the mapping the caller still holds, and the buffer holds
+    // every byte the read is given room to write.
+    let read = unsafe {
+        libc::pread(
+            memory,
+            records.as_mut_ptr().cast(),
+            records.len(),
+            at as i64,
+        )
+    };
+    ensure!(
+        read == records.len() as isize,
+        "failed to read the guest's input region"
+    );
+    let mut head = [0u8; ANCHOR];
+    for (bytes, record) in head.chunks_mut(8).zip(records.chunks_exact(16)) {
+        bytes.copy_from_slice(&record[8..]);
+    }
+    Ok(head)
 }
 
 impl Profiler for SP1Profiler {

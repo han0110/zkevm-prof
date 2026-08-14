@@ -35,9 +35,8 @@ written to exercise and the ones before it only build the state it runs against.
 several tests contributes one entry per test.
 
 The output pairs the per-test costs with the zkVM that produced them, which is how a reader knows what
-a cost map's kinds mean. An entry also carries `peak_heap_bytes` and `peak_stack_bytes` on a zkVM
-whose backend reads those regions, and omits a field where none was read rather than recording a
-region of nothing.
+a cost map's kinds mean. An entry also carries `peak_heap_bytes` on a zkVM whose backend reads the
+heap, and omits the field where none was read rather than recording a heap of nothing.
 
 ```json
 {
@@ -45,7 +44,6 @@ region of nothing.
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
       "cost": { "precompile": 7154852252, "rv64": 10994655178, "cost": 18149507430 },
       "peak_heap_bytes": 57531938,
-      "peak_stack_bytes": 68074,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
   },

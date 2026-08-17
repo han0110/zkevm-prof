@@ -2846,21 +2846,28 @@ function sharedTokens(cases) {
 
 /* Where a synthetic corpus's cases sit, which is the file holding them, taken from the segment the
    names stop agreeing on, and the test within that file. A corpus taken off the chain is one flat
-   run of blocks and sits under neither. */
+   run of blocks and sits under neither. A layer names a group by the whole of what it sits under, so
+   that two files of the same name under different directories stay two groups. A test is shown under
+   the file holding it alone, the directories above that file being what the file layer is read
+   for. */
 function blockCategories(names) {
   const synthetic = names.filter((name) => !fromChain(name));
   if (!synthetic.length) return null;
   const path = (name) => name.split('::')[0];
   const depth = commonDepth(synthetic.map(path));
   const file = (name) => path(name).split('/').slice(depth).filter(Boolean).join(' / ');
-  return { file, test: (name) => [file(name), testName(name)].filter(Boolean).join(' / ') };
+  const test = (name) => [file(name), testName(name)].filter(Boolean).join(' / ');
+  return {
+    file: { of: file, shown: (group) => group },
+    test: { of: test, shown: (group) => group.split(' / ').slice(-2).join(' / ') },
+  };
 }
 
 /* A listing of blocks is broken up by the test alone, the file it sits in being what tells one
    family of tests from another and reading as part of the test's own name. */
 function blockGroups(names) {
   const categories = blockCategories(names);
-  return categories ? [{ label: 'Test', of: categories.test }] : [];
+  return categories ? [{ label: 'Test', of: categories.test.of }] : [];
 }
 
 /*
@@ -3230,7 +3237,7 @@ function CategoriesPanel({ rows, fixtures, categories }) {
   const chosen = values.find((option) => option.key === value) ?? values[0];
 
   const groups = useMemo(() => {
-    const of = categories[grouping];
+    const { of } = categories[grouping];
     const held = new Map();
     for (const name of fixtures) {
       const key = of(name);
@@ -3264,7 +3271,7 @@ function CategoriesPanel({ rows, fixtures, categories }) {
     return against == null || own == null ? null : (own - against) / against;
   };
 
-  const layer = CATEGORY_LAYERS.find((option) => option.key === grouping);
+  const shown = (group) => categories[grouping].shown(group.name);
 
   return html`
     <${Card} title="Categories">
@@ -3287,9 +3294,9 @@ function CategoriesPanel({ rows, fixtures, categories }) {
           {
             ...column(
               'group',
-              layer.label,
-              (group) => group.name,
-              (group) => html`<${Truncate} text=${group.name} />`
+              'Category',
+              shown,
+              (group) => html`<${Truncate} text=${shown(group)} />`
             ),
             fill: true,
           },

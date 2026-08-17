@@ -25,6 +25,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # The profile workflow publishes only from main, so the scripts behind that are checked here
+      # instead of first running once they have already landed.
+      - name: Check the scripts
+        run: |
+          shellcheck .github/scripts/*.sh
+          python3 .github/scripts/report.py --help > /dev/null
+
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq

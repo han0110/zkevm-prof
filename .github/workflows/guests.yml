@@ -1,0 +1,42 @@
+name: Guests
+
+on:
+  workflow_call:
+    inputs:
+      zkvm:
+        description: zkVM the guests are listed for.
+        required: true
+        type: string
+      stateless-validator:
+        description: Guest to profile, or every guest the registry lists when left empty.
+        required: false
+        default: ''
+        type: string
+    outputs:
+      stateless-validators:
+        description: Guests to profile, as the JSON array a matrix expands over.
+        value: ${{ jobs.guests.outputs.stateless-validators }}
+
+jobs:
+  # The registry lists the guests each zkVM has a published ELF for, so the matrix is read from it
+  # rather than restated by every caller. Naming one guest narrows the matrix to it.
+  guests:
+    runs-on: ubuntu-latest
+    outputs:
+      stateless-validators: ${{ steps.registry.outputs.stateless-validators }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - id: registry
+        env:
+          ZKVM: ${{ inputs.zkvm }}
+          ONLY: ${{ inputs.stateless-validator }}
+        run: |
+          guests=$(jq -c --arg zkvm "${ZKVM}" --arg only "${ONLY}" \
+            '.[$zkvm] | map(.["stateless-validator"])
+             | if $only == "" then . else map(select(. == $only)) end' elf-registry.json)
+          if [[ "${guests}" == "[]" ]]; then
+            echo "::error::the registry lists no ${ONLY:-guest} for ${ZKVM}"
+            exit 1
+          fi
+          echo "stateless-validators=${guests}" >> "${GITHUB_OUTPUT}"

@@ -18,36 +18,91 @@ cargo build --release
 zkevm-prof profile \
   --zkvm openvm \
   --stateless-validator zesu \
-  --input fixtures/mainnet-25580000-1000 \
-  --output zesu-openvm.json
+  --suite mainnet-25580000-1000
 ```
 
-| Option                  | Values                               | Meaning                                                     |
-| ----------------------- | ------------------------------------ | ----------------------------------------------------------- |
-| `--zkvm`                | `openvm`, `sp1`, `zisk`              | zkVM the guest is profiled on.                              |
-| `--stateless-validator` | the guests `elf-registry.json` lists | Guest to profile.                                           |
-| `--input`               | path                                 | Directory of EEST fixtures, walked recursively for `.json`. |
-| `--output`              | path                                 | Where the profile JSON is written.                          |
-| `--elf`                 | path                                 | Guest ELF to profile, in place of the downloaded one.       |
+| Option                  | Values                               | Meaning                                                          |
+| ----------------------- | ------------------------------------ | ---------------------------------------------------------------- |
+| `--zkvm`                | `openvm`, `sp1`, `zisk`              | zkVM the guest is profiled on.                                   |
+| `--stateless-validator` | the guests `elf-registry.json` lists | Guest to profile.                                                |
+| `--suite`               | the corpora `suite-registry.json` lists | Corpus to profile, fetched unless an input directory is given. |
+| `--input`               | path                                 | Directory of EEST fixtures, walked recursively for `.json`, in place of the fetched corpus. |
+| `--filter`              | regular expression                   | Profiles only the blocks whose name matches, in place of the whole corpus. |
+| `--output-dir`          | path                                 | Directory the profile is published under, `profiles` by default. |
+| `--elf`                 | path                                 | Guest ELF to profile, in place of the downloaded one.            |
+| `--force`               | flag                                 | Reprofiles a guest whose run is already published.               |
+
+`suite-registry.json` says where each corpus is published, so naming a suite is enough to profile it.
+The archive streams from its release straight into tar, which extracts the corpus alone into
+`fixtures/<suite>` and leaves no second copy on a disk the fixtures already fill. A corpus larger than
+the 2 GiB a release caps one asset at is published in parts and concatenated in the order listed, and
+one holding several corpora is extracted by the subdirectory the suite names. That directory is
+reused on the next run, so a corpus is fetched once, and `GITHUB_TOKEN` lifts the rate limit an
+anonymous download is held to where it is set. The fetch happens only after an already-published run
+is skipped, so re-profiling an unchanged guest downloads nothing.
+
+Passing `--input` profiles the directory given instead, fetching nothing, and the suite is then that
+directory's name unless `--suite` states one.
+
+`--filter` narrows either to the blocks whose key matches a regular expression, which is how a span of
+chain or a family of tests is profiled without a corpus of its own. A run so narrowed is filed under
+the corpus it was cut from and covers part of it, so it reads on the page as a run short of that
+corpus, and profiling the whole afterwards takes `--force` since the path already carries a run of
+this guest. Continuous integration narrows this way on a pull request, profiling the first hundred
+blocks of the mainnet corpus rather than a corpus of its own.
+
+The profile is written to
+`<output dir>/<stateless validator>/<ELF SHA-256, 16 digits>/<suite>.json`, which identifies a run by
+the guest, the exact binary and the corpus. The harness that measured it is recorded in the file
+rather than named by the path, so a release supersedes the runs it re-measures instead of filing a
+second copy of each beside them. A run whose file already records this harness version, that ELF,
+that ELF URL, this zkVM version and this guest version is skipped, which is checked before the guest
+is compiled so re-profiling an unchanged guest pays only for the download. `--force` measures it
+again regardless.
 
 Only the last block of each fixture is profiled, since that is the block an EEST blockchain test is
 written to exercise and the ones before it only build the state it runs against. A fixture holding
 several tests contributes one entry per test.
 
-The output pairs the per-test costs with the zkVM that produced them, which is how a reader knows what
-a cost map's kinds mean. An entry also carries `peak_heap_bytes` on a zkVM whose backend reads the
-heap, and omits the field where none was read rather than recording a heap of nothing.
+The output stands on its own. Each entry carries the cost keyed by the kinds that zkVM charges for
+alongside the `total` they sum to, and `peak_heap_bytes` on a zkVM whose backend reads the heap,
+omitting the field where none was read rather than recording a heap of nothing. A block the guest did
+not get through is recorded under `failures` with what the backend reported, which is what a profile
+short of its corpus is short by, and the key is left out entirely by a run that failed on nothing.
+The meta names the guest, the exact binary a cost was measured against, the corpus it covers and the
+kinds the cost map decomposes into, so nothing else has to be read to interpret it.
 
 ```json
 {
   "profile": {
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
-      "cost": { "precompile": 7154852252, "rv64": 10994655178, "cost": 18149507430 },
+      "cost": { "precompile": 7154852252, "rv64": 10994655178, "total": 18149507430 },
       "peak_heap_bytes": 57531938,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
   },
-  "meta": { "zkvm": "openvm" }
+  "failures": {
+    "witness-generator-spec-cli::block_25580001_7f0be412": {
+      "reason": "the guest hit an unaligned operand",
+      "metadata": { "gas_used": 29981210, "block_number": 25580001 }
+    }
+  },
+  "meta": {
+    "version": "0.1.0",
+    "zkvm": "openvm",
+    "zkvm_version": "v2.1.0-preview",
+    "stateless_validator": "zesu",
+    "stateless_validator_version": "glamsterdam-devnet-7",
+    "elf_url": "https://github.com/...",
+    "elf_sha256": "37c2fecb7645bb92...",
+    "suite": "mainnet-25580000-1000",
+    "generated_at": 1786772234,
+    "run_url": null,
+    "composition": [
+      { "name": "precompile", "note": "Precompiles" },
+      { "name": "rv64", "note": "RISC-V instructions" }
+    ]
+  }
 }
 ```
 
@@ -60,8 +115,8 @@ RAYON_NUM_THREADS=8 zkevm-prof profile --zkvm openvm ...
 ```
 
 Progress and failures go to stderr, and whatever a backend prints on either stream while it runs is
-dropped. A failed block is reported and skipped, the run prints how many were skipped, and the command
-fails only when every block failed.
+dropped. A failed block is reported and recorded under `failures`, the run prints how many blocks it
+got through, and the command fails only when every block failed.
 
 ## Cost
 

@@ -4,7 +4,11 @@ on:
   workflow_call:
     inputs:
       zkvm:
-        description: zkVM to profile the guests on.
+        description: zkVM to profile the guest on.
+        required: true
+        type: string
+      stateless-validator:
+        description: Guest to profile.
         required: true
         type: string
 
@@ -17,42 +21,47 @@ env:
   # install step below puts on PATH rather than the distribution clang.
   RVR_CC: clang-22
   RVR_LD: lld
+  # Branch the page is published to, which is also where a run reads the profiles already published
+  # so it can tell an ELF it has already measured from one it has not.
+  PAGES_BRANCH: gh-pages
 
 jobs:
-  # The registry lists the guests each zkVM has a published ELF for, so the matrix is read from it
-  # rather than restated by every caller.
-  guests:
-    runs-on: ubuntu-latest
-    outputs:
-      stateless-validators: ${{ steps.registry.outputs.stateless-validators }}
-    steps:
-      - uses: actions/checkout@v7
-
-      - id: registry
-        env:
-          ZKVM: ${{ inputs.zkvm }}
-        run: |
-          echo "stateless-validators=$(jq -c --arg zkvm "${ZKVM}" \
-            '.[$zkvm] | map(.["stateless-validator"])' elf-registry.json)" >> "${GITHUB_OUTPUT}"
-
+  # One guest, profiled and published on its own, so a corpus a guest gets through in an hour is on
+  # the page an hour later rather than when the slowest guest of its zkVM is done.
   profile:
-    needs: guests
-    name: ${{ matrix.stateless-validator }}-${{ inputs.zkvm }}
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     env:
-      # A pull request profiles a tenth of the corpus, which catches a regression in the profiler
-      # without spending hours per guest.
-      FIXTURE_SET: ${{ github.event_name == 'pull_request' && 'mainnet-25580000-100' || 'mainnet-25580000-1000' }}
-      # Release the corpora are published under, each as assets named after the set they hold.
-      FIXTURE_RELEASE: fixtures-mainnet-25580000
-    strategy:
-      fail-fast: false
-      matrix:
-        stateless-validator: ${{ fromJSON(needs.guests.outputs.stateless-validators) }}
+      SUITE: mainnet-25580000-1000
+      # A pull request profiles the first hundred blocks of that corpus rather than a corpus of its
+      # own, which catches a regression in the profiler without spending hours per guest.
+      FILTER: ${{ github.event_name == 'pull_request' && 'block_255800[0-9][0-9]_' || '' }}
     steps:
       - uses: actions/checkout@v7
 
-      # The corpus is 15 GB extracted beside its cached archive, past what a stock runner has free.
+      # The published profiles, which the profiler reads to skip a guest whose ELF it has already
+      # measured on this zkVM version. Only the code for no such branch means nothing is published
+      # yet, since taking a fault for an absent branch would reprofile this guest for hours against
+      # a page that already holds it.
+      - name: Look for the published page
+        id: pages
+        run: |
+          status=0
+          git ls-remote --exit-code --heads origin "${PAGES_BRANCH}" > /dev/null || status=$?
+          case "${status}" in
+            0) echo "exists=true" >> "${GITHUB_OUTPUT}" ;;
+            2) ;;
+            *) exit "${status}" ;;
+          esac
+
+      - uses: actions/checkout@v7
+        if: steps.pages.outputs.exists == 'true'
+        with:
+          ref: ${{ env.PAGES_BRANCH }}
+          path: published
+
+      # The corpus is 15 GB extracted, past what a stock runner has free.
       - name: Free up disk space
         run: bash .github/scripts/free-up-disk-space.sh
 
@@ -71,7 +80,7 @@ jobs:
         with:
           shared-key: build
           # A branch saves under its own cache scope, and the OpenVM build tree is large enough that
-          # a copy per branch would evict the fixture archives, so only main writes.
+          # a copy per branch would exhaust what a repository gets, so only main writes.
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
@@ -87,113 +96,51 @@ jobs:
 
       - run: cargo build --release --locked
 
-      # A corpus is published as split assets, since a release caps one asset at 2 GiB while leaving
-      # their number and total size free. The parts stream into tar rather than landing whole, which
-      # keeps a second copy off a disk the extracted corpus already fills. --strip-components=1 drops
-      # the archive's top-level directory so the fixtures land directly under fixtures/<set>.
-      - name: Download and extract fixtures
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -o pipefail
-          gh release download "${FIXTURE_RELEASE}" \
-            --pattern "${FIXTURE_SET}.tar.zst.*.part" --dir parts
-          mkdir -p "fixtures/${FIXTURE_SET}"
-          cat parts/"${FIXTURE_SET}".tar.zst.*.part |
-            tar --zstd -x -C "fixtures/${FIXTURE_SET}" --strip-components=1
-          rm -rf parts
-          find "fixtures/${FIXTURE_SET}" -name '*.json' | wc -l
-
+      # The profile lands under the guest, the hash of the ELF it measured and the corpus it covers,
+      # which is the path the page fetches it by. Profiling runs against a copy of what is already
+      # published, so a guest whose ELF has already been measured on this zkVM version is skipped,
+      # and only what this job actually wrote is carried forward. The corpus the suite names is
+      # fetched by the profiler after that check, so a skipped guest downloads nothing at all.
       - name: Profile
         # A guest downloaded from an ere-guests build artifact, which is what every pin other than
         # a tag resolves to, is served by the GitHub API only to an authenticated caller. ere-guests
         # is public, so the job's own token is enough and no cross-repository secret is needed.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZKVM: ${{ inputs.zkvm }}
+          STATELESS_VALIDATOR: ${{ inputs.stateless-validator }}
         run: |
+          mkdir -p profiles produced
+          if [[ -d published/profiles ]]; then cp -r published/profiles/. profiles/; fi
+          touch since
+          # A narrowed run covers part of a corpus under that corpus's own name, so it is measured
+          # whether or not the whole of it is already published and is never published itself.
+          narrowed=()
+          if [[ -n "${FILTER}" ]]; then narrowed=(--filter "${FILTER}" --force); fi
           ./target/release/zkevm-prof profile \
-            --zkvm ${{ inputs.zkvm }} \
-            --stateless-validator ${{ matrix.stateless-validator }} \
-            --input "fixtures/${FIXTURE_SET}" \
-            --output "${{ matrix.stateless-validator }}-${{ inputs.zkvm }}.json"
+            --zkvm "${ZKVM}" \
+            --stateless-validator "${STATELESS_VALIDATOR}" \
+            --suite "${SUITE}" \
+            "${narrowed[@]}" \
+            --output-dir profiles
+          find profiles -name '*.json' -newer since -exec cp --parents {} produced/ \;
 
       - uses: actions/upload-artifact@v7
         with:
-          name: profile-${{ matrix.stateless-validator }}-${{ inputs.zkvm }}
-          path: ${{ matrix.stateless-validator }}-${{ inputs.zkvm }}.json
+          name: profiles-${{ inputs.stateless-validator }}-${{ inputs.zkvm }}
+          path: produced/profiles
+          if-no-files-found: ignore
 
-  report:
-    needs: profile
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    # Every caller publishes into the same Pages branch, and a caller's own concurrency group does
-    # not cover the others, so publication is serialised here instead.
-    concurrency:
-      group: publish-pages
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
-            libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev
-
-      - name: Install the LLVM toolchain
-        run: bash .github/scripts/install-llvm.sh
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          shared-key: build
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-
-      # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
-      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
-      # is retried apart from the compile, which needs no network of its own.
-      - name: Fetch dependencies
-        run: |
-          for attempt in 1 2 3; do
-            if cargo fetch --locked; then exit 0; fi
-            sleep 15
-          done
-          exit 1
-
-      - run: cargo build --release --locked
-
-      - uses: actions/download-artifact@v8
-        with:
-          pattern: profile-*
-          merge-multiple: true
-          path: profiles
-
-      # The page is static and loads one JSON per zkVM, so publishing copies the site next to a
-      # report named after the zkVM this run profiled. The registry goes with them, since the page
-      # fetches it for the guest list it colours a series by.
-      - name: Report
-        run: |
-          cp -r site publish
-          cp elf-registry.json publish/
-          ./target/release/zkevm-prof report --input profiles/*.json --output "publish/${{ inputs.zkvm }}.json"
-          ./target/release/zkevm-prof report --input profiles/*.json --output report.md --format md
-          cat report.md >> "${GITHUB_STEP_SUMMARY}"
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: report
-          path: |
-            publish/${{ inputs.zkvm }}.json
-            report.md
-
-      # Every zkVM publishes the same static site to the root, and keep_files leaves the other
-      # zkVMs' JSON in place, so a run only ever replaces its own tab's data.
+      # The page is static and reads the runs it can load from an index written beside them, so the
+      # site is published next to the profiles and the two registries it fetches, with the index
+      # rebuilt over the whole branch.
       - name: Publish to GitHub Pages
         if: github.ref == 'refs/heads/main'
-        uses: peaceiris/actions-gh-pages@v4
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: publish
-          keep_files: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ZKVM: ${{ inputs.zkvm }}
+          STATELESS_VALIDATOR: ${{ inputs.stateless-validator }}
+        run: |
+          bash .github/scripts/publish-page.sh \
+            "https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}" \
+            produced/profiles "profile ${STATELESS_VALIDATOR} on ${ZKVM}"

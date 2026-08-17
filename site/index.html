@@ -3,54 +3,3417 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>zkEVM guest cost profile</title>
+<!-- Every route under the published path is served this file, so links resolve against the base
+     rather than against whichever route the reader arrived on. -->
+<base href="/zkevm-prof/">
+<title>zkEVM guest cost estimation</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap">
-<link rel="stylesheet" href="report.css">
-<script src="https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.min.js"></script>
+<script type="importmap">
+{
+    "imports": {
+        "preact": "https://cdn.jsdelivr.net/npm/preact@10.29.8/dist/preact.module.js",
+        "preact/hooks": "https://cdn.jsdelivr.net/npm/preact@10.29.8/hooks/dist/hooks.module.js",
+        "@preact/signals": "https://cdn.jsdelivr.net/npm/@preact/signals@2.11.1/dist/signals.module.js",
+        "@preact/signals-core": "https://cdn.jsdelivr.net/npm/@preact/signals-core@1.14.4/dist/signals-core.module.js",
+        "htm": "https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.module.js",
+        "htm/preact": "https://cdn.jsdelivr.net/npm/htm@3.1.1/preact/index.module.js",
+        "echarts": "https://cdn.jsdelivr.net/npm/echarts@6.1.0/dist/echarts.esm.min.js"
+    }
+}
+</script>
+<style>
+/* Theme tokens. The charts read these back, so the palette is defined only here. */
+
+:root {
+  color-scheme: dark;
+
+  --warm-base: #1a1410;
+  --warm-surface: #241c15;
+  --warm-elevated: #30251b;
+  --warm-border: #3f3327;
+  --text-primary: #f2e8da;
+  --text-secondary: #bba890;
+  --text-muted: #8a7a64;
+
+  --cat-1: #e8743b;
+  --cat-2: #ebb13e;
+  --cat-3: #c8434c;
+  --cat-4: #b0673a;
+  --cat-5: #9da94f;
+  --cat-6: #4fa088;
+  --cat-7: #9c5e8e;
+  --cat-8: #d9c18a;
+
+  --background: var(--warm-base);
+  --surface: var(--warm-surface);
+  --elevated: var(--warm-elevated);
+  --foreground: var(--text-primary);
+  --muted: var(--text-secondary);
+  --faint: var(--text-muted);
+  --border: var(--warm-border);
+  --primary: var(--cat-1);
+  --complete: var(--cat-5);
+  --partial: var(--cat-3);
+}
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+body {
+  margin: 0;
+  padding: 32px 24px 48px;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+  font-size: 14px;
+  -webkit-font-smoothing: antialiased;
+}
+
+#app {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+/* One column both the header and the pages sit in, so a page's cards line up under the title. */
+header,
+main {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Headings are deliberately flat, so a page title, a panel title and a section title read alike. */
+h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+nav {
+  display: flex;
+  gap: 4px;
+}
+
+a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* A control drawn as a glyph rather than lettered, so its cell carries nothing a sort or a screen
+   reader would take for a value of the column. */
+a svg,
+.icon-button {
+  color: var(--faint);
+  vertical-align: middle;
+  transition: color 150ms;
+}
+
+a:hover svg,
+.icon-button:hover {
+  color: var(--primary);
+}
+
+.icon-button {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+}
+
+/* The name a row is read by against the button that copies the whole of it. The name gives way,
+   since the button is one glyph and the name is however long the corpus made it. */
+.block-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The name is cut to what its column leaves it rather than to the longest word in it, and takes the
+   bound every other value does wherever the column it stands in is not the one claiming the slack. */
+.block-name .truncate {
+  min-width: 0;
+}
+
+/* A thousand rows carrying a drawn control each is a thousand of them to paint, so only the row
+   under the pointer or holding the focus shows one. */
+.block-name .icon-button {
+  visibility: hidden;
+}
+
+tr:hover .block-name .icon-button,
+.block-name .icon-button:focus-visible {
+  visibility: visible;
+}
+
+/* A name raising its whole value stands the button down rather than leaving it over the text. The
+   button is reached from outside the name, which is where the pointer is when it is wanted. A name
+   short enough to carry no overlay raises nothing to stand it down for, so it keeps the button the
+   row hover puts there. */
+.block-name .truncate:has(.truncate-full):hover ~ .icon-button {
+  visibility: hidden;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
+input[type='checkbox'] {
+  accent-color: var(--primary);
+  cursor: pointer;
+}
+
+input[type='checkbox']:disabled {
+  cursor: not-allowed;
+}
+
+/* One ring for every control, following whatever radius the control carries. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+[tabindex]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--primary);
+}
+
+.nav-link {
+  padding: 6px 12px;
+  border-radius: 6px;
+  color: var(--muted);
+  font-weight: 500;
+  transition: background-color 150ms, color 150ms;
+}
+
+.nav-link:hover {
+  background: color-mix(in oklab, var(--elevated) 60%, transparent);
+  color: var(--foreground);
+  text-decoration: none;
+}
+
+.nav-link[aria-current] {
+  background: color-mix(in oklab, var(--primary) 15%, transparent);
+  color: var(--foreground);
+}
+
+/* One surface for every panel, so a table and a chart are indistinguishable when stacked. */
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+}
+
+.card h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+/* A note under a panel heading, qualifying what the figures below it mean. An empty state is a
+   paragraph too and carries its own treatment. */
+.card p:not(.empty) {
+  margin: -4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+/* Heading beside the control that reorders the chart under it. */
+.card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+/* Provenance and figures, laid out as label over value so a long one wraps without a column rule.
+   Columns stand further apart than rows, which is what tells a wrapped pair from its neighbour. */
+.field-strip {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 40px;
+  row-gap: 16px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+/* One overline treatment for every label that stands over what it names. */
+.field-label,
+.chip-set-label,
+.filter-label,
+.data-table th,
+.group-row td {
+  color: var(--faint);
+  font-size: 12px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.field-value {
+  position: relative;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Sets of chips on one row, each behind the question it answers and standing far enough from the
+   next that breaking a list up and narrowing it never read as one run of controls. */
+.chip-sets {
+  display: flex;
+  flex-wrap: wrap;
+  column-gap: 32px;
+  row-gap: 8px;
+}
+
+/* One pill treatment for the group toggles and the chart controls, a muted outline that warms on
+   hover and takes the brand tint only where it reports a selection. */
+.chip,
+.pill {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 500;
+  transition: background-color 150ms, border-color 150ms, color 150ms;
+}
+
+/* A chip names a column, which is how the column heading beside it is printed. */
+.chip {
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.chip[aria-pressed='false']:hover,
+.pill:hover:not(:disabled) {
+  border-color: color-mix(in oklab, var(--primary) 60%, transparent);
+  color: var(--foreground);
+}
+
+.chip[aria-pressed='true'],
+.chip[aria-expanded='true'] {
+  border-color: var(--primary);
+  background: color-mix(in oklab, var(--primary) 15%, transparent);
+  color: var(--foreground);
+}
+
+.pill:disabled {
+  color: var(--faint);
+}
+
+/* A chip that opens a panel below it, which is what the panel is positioned against. */
+.menu-anchor {
+  position: relative;
+  display: inline-flex;
+}
+
+/* Where a filter is set in detail, raised over the table rather than pushing it down, since a
+   listing being narrowed is what the reader is watching while they drag. */
+.menu {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 6px);
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  /* A zkVM pricing several kinds offers a bound on each of them twice over, so the panel scrolls
+     rather than running past the table it narrows. */
+  max-height: 60vh;
+  min-width: 280px;
+  padding: 16px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--elevated);
+  box-shadow: 0 8px 24px -8px rgb(0 0 0 / 0.6);
+}
+
+/* Names the dimension a control in the panel narrows, whichever kind of control it is. */
+.filter-label {
+  display: block;
+  margin-bottom: 10px;
+}
+
+/* The two ends of the range, printed under the thumb each is dragged by. */
+.range-bounds {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Both thumbs share one track, so the two inputs are stacked in the same box and only their thumbs
+   answer the pointer. The painted track sits behind them, its selected span in the brand tint. */
+.range {
+  position: relative;
+  height: 16px;
+}
+
+.range-track,
+.range-span {
+  position: absolute;
+  top: 6px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.range-track {
+  right: 0;
+  left: 0;
+  background: var(--border);
+}
+
+.range-span {
+  background: var(--primary);
+}
+
+.range input {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  height: 16px;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  appearance: none;
+}
+
+.range input:focus-visible {
+  box-shadow: none;
+}
+
+.range input::-webkit-slider-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: grab;
+  pointer-events: auto;
+  appearance: none;
+}
+
+.range input::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--primary);
+  cursor: grab;
+  pointer-events: auto;
+}
+
+.range input:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 2px var(--foreground);
+}
+
+.range input:focus-visible::-moz-range-thumb {
+  box-shadow: 0 0 0 2px var(--foreground);
+}
+
+/* How far a filter narrowed the listing, printed only where it narrowed it. */
+.filter-count {
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Narrows a table to the rows whose name carries what is typed. The caret is what reports the focus,
+   so it takes none of the ring the buttons carry. */
+.search {
+  width: 200px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12px;
+}
+
+.search:focus-visible {
+  box-shadow: none;
+}
+
+.search::placeholder {
+  color: var(--faint);
+}
+
+/* A run that covered its corpus against one that failed on part of it, which is a state rather than
+   a figure and reads as one. */
+.complete {
+  color: var(--complete);
+}
+
+.partial {
+  color: var(--partial);
+}
+
+/* Scroll container and the scrollport the header sticks to. A card too narrow to hold the table
+   scrolls it sideways, which keeps the columns at the widths they were sized to instead of
+   compressing them into each other or widening the page.
+
+   How tall it stands is the caller's to state. A corpus runs to a thousand rows, so a listing of one
+   is capped and its header stays in view down the length of it. A listing a bound can cut to a
+   handful holds that height rather than shrinking to what is left, so narrowing it moves nothing
+   below it on the page. A listing short enough to be read whole carries neither, being left to the
+   page's own scroll, which spends no height on a scrollport inside one. */
+.table-wrap {
+  --table-height: 70vh;
+
+  overflow: auto;
+}
+
+.table-wrap.capped {
+  max-height: var(--table-height);
+}
+
+.table-wrap.fixed {
+  height: var(--table-height);
+}
+
+/* Every cell is inset by the same padding, held here rather than on each of them, since a value too
+   long for its cell is raised in a box that has to sit its text where the cell sits it. */
+.data-table {
+  --cell-inset: 12px;
+  --cell-padding: 10px var(--cell-inset);
+
+  width: 100%;
+  border-collapse: collapse;
+  line-height: 20px;
+}
+
+.data-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface);
+}
+
+/* Every rule is a cell's own rather than the row's, so a cell that carries a fill of its own or sits
+   in its own positioning context cannot paint over the line under it. */
+.data-table th,
+.data-table tbody td {
+  border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+  padding: var(--cell-padding);
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+
+/* Positioned so that a value too long for its cell has the cell's own box to be raised over. */
+.data-table td {
+  position: relative;
+  padding: var(--cell-padding);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Figures line up digit over digit, which is what makes two magnitudes comparable down a column.
+   The column itself states which side it aligns to, since only its caller knows it carries a
+   figure. */
+.data-table .right {
+  text-align: right;
+}
+
+/* A selection cell holds only its control, so it takes none of the width a table spreads over the
+   columns whose content the reader is here for. */
+.data-table td:has(> input[type='checkbox']) {
+  width: 1px;
+}
+
+/* Outer edges run flush with the panel's own heading rather than carrying the gap that separates one
+   column from the next, which is width the column holding the names would otherwise lose twice. */
+/* A figure is inset less than text is, since the gap either side of a right aligned number is width
+   the column holding the names would otherwise be read without. */
+.data-table th.right,
+.data-table td.right {
+  padding-right: 6px;
+  padding-left: 6px;
+}
+
+/* The outer edges keep the inset every other cell carries, so the figures at either end of a row do
+   not sit against the panel's own border. */
+.data-table th:first-child,
+.data-table td:first-child {
+  padding-left: var(--cell-inset);
+}
+
+.data-table th:last-child,
+.data-table td:last-child {
+  padding-right: var(--cell-inset);
+}
+
+/* Every column is as wide as what it holds, which is what keeps the width the table does not need
+   out of the columns carrying figures. A column stated below its content is held at its content, so
+   one pixel is the way to ask for that. */
+.data-table th,
+.data-table td {
+  width: 1px;
+}
+
+/* Claims the slack, which is what keeps the columns beside it at the width of what they hold rather
+   than stretched to fill the panel. It collapses to nothing once they need the whole of it. */
+.data-table .spacer {
+  width: 100%;
+  padding: 0;
+}
+
+/* The column the table is read for, which claims the width the columns beside it leave rather than
+   the width its own content wants. Its content is lifted out of the width calculation and clipped to
+   the cell instead, since a cell holding one long value would otherwise set the width of the column
+   and engines disagree over whether a maximum width on a cell stops it. The floor is what stops the
+   column collapsing on a panel too narrow to hold the columns beside it. */
+.data-table .fill {
+  width: 100%;
+  min-width: 220px;
+}
+
+.data-table td.fill > * {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  padding: inherit;
+}
+
+/* A value in the column that claims the slack is bounded by the cell it sits in rather than by a
+   bound of its own, which is what cuts it. */
+.data-table .fill .truncate {
+  min-width: 0;
+  max-width: none;
+}
+
+/* A heading that sorts or folds is a button carrying none of a button's own look, so the heading
+   reads the same whether it is pressable or not. */
+.data-table th button,
+.group-toggle {
+  display: inline-flex;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  transition: color 150ms;
+}
+
+.data-table th button {
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+}
+
+.data-table th button:hover,
+.data-table th[aria-sort] button {
+  color: var(--foreground);
+}
+
+/* The sort arrow trails its heading at a fraction of it, so a column reads by its label first. */
+.data-table th button span {
+  font-size: 0.7em;
+}
+
+.data-table tbody tr {
+  transition: background-color 150ms;
+}
+
+.data-table tbody tr:hover {
+  background: color-mix(in oklab, var(--elevated) 40%, transparent);
+}
+
+.row-selected {
+  background: color-mix(in oklab, var(--primary) 10%, transparent);
+}
+
+/* A selected row deepens under the cursor rather than dropping to the grey tint, so it never reads
+   as deselected while hovered. */
+.data-table tbody tr.row-selected:hover {
+  background: color-mix(in oklab, var(--primary) 20%, transparent);
+}
+
+/* Group heading spanning the table, printed as the overline the column headings use. Its own fill
+   keeps the row hover off it, since a group names rows rather than being one. */
+.group-row td {
+  padding: 0;
+  background: var(--surface);
+  font-weight: 600;
+}
+
+/* The group's name against whatever the listing offers for the group as a whole. Held to the width
+   of the scrollport and pinned to it, so a table scrolled sideways keeps both ends of the heading in
+   view rather than parking them at the far edges of the columns. It is pinned at the inset its own
+   cell carries rather than flush, which is what keeps it lined up with the column below it however
+   far the table has been scrolled. A heading holds its rows back and is therefore a row in its own
+   right, standing as tall as one, and only the vertical is its own, the cell it sits in carrying the
+   inset every other cell does. */
+.group-head {
+  position: sticky;
+  left: var(--cell-inset);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  /* A percentage of the cell rather than the scrollport in pixels, since a heading spans every
+     column and an explicit width on it is a width every column it spans is held to. The scrollport
+     caps it instead, which is what keeps both ends of it in view once a table is scrolled. */
+  width: 100%;
+  max-width: calc(var(--scrollport, 100%) - 2 * var(--cell-inset));
+  padding: 10px 0;
+}
+
+/* A heading spans every column, so its own length would otherwise set the width of all of them. It
+   gives way instead, since the columns hold what the table is read for. */
+.group-head > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.group-head a {
+  font-weight: 500;
+}
+
+/* A heading that opens and closes its own rows, printed as the heading it replaces. */
+.group-toggle {
+  align-items: baseline;
+  gap: 8px;
+}
+
+.group-toggle:hover {
+  color: var(--foreground);
+}
+
+/* Sized as the sort arrow is, in a slot of its own so the heading beside it holds still as the two
+   glyphs swap. */
+.group-toggle > span:first-child {
+  width: 9px;
+  font-size: 0.7em;
+}
+
+.group-count {
+  color: var(--faint);
+  font-weight: 400;
+}
+
+/* A long identifier is cut to a bound of its own, so no one column can set the width of the table.
+   The box the whole value is raised in is the cell's rather than this one's, which is why this is
+   left unpositioned. */
+.truncate {
+  display: inline-block;
+  max-width: var(--truncate-width, 220px);
+  vertical-align: bottom;
+}
+
+.truncate-text {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * The whole value, raised over the column to the right by the text that was cut. It takes the box of
+ * the cell it stands in, padding and all, and grows rightwards on one line from there, so it reads
+ * as that cell extended rather than as a note about it, and its text sits exactly where the cell
+ * sits its own. It is a descendant of what raises it, so the pointer moving onto it keeps it up and
+ * the value can be read and selected out of it.
+ *
+ * It stands above the cells it reaches over, which carry no order of their own and would otherwise
+ * paint over it for being later in the row, and below the column heading, which is pinned to the top
+ * of a scrolled listing and names what the row under it holds.
+ */
+.truncate-full {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 1;
+  display: none;
+  width: max-content;
+  min-width: 100%;
+  height: 100%;
+  /* The inset of the cell it stands in, so its text lands where the cell's own text is. A value in
+     the column that claims the slack sits in a box already carrying that inset. */
+  padding: var(--cell-padding, 0);
+  /* The row under it, opaque, since the row is hovered wherever this is shown. */
+  background: color-mix(in oklab, var(--elevated) 40%, var(--surface));
+  white-space: nowrap;
+}
+
+/* Centred in the box it stands in, as the value it covers is centred in the cell, so the text lands
+   on the line it was cut on rather than at the top of the row. */
+.truncate:hover .truncate-full {
+  display: flex;
+  align-items: center;
+}
+
+/* Legend for the kinds a total splits into, printed under the chart rather than above it. */
+.note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 28px;
+  margin: 12px 0 0;
+  padding: 0;
+  list-style: none;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.note li::before {
+  content: '\2022';
+  margin-right: 7px;
+  color: var(--faint);
+}
+
+.empty {
+  margin: 0;
+  color: var(--faint);
+}
+
+.chart {
+  width: 100%;
+}
+
+/* Where every chart tooltip is drawn. Clipping its own overflow is what keeps a tooltip the chart
+   left behind from reaching past a viewport that has since narrowed, and the pointer passes through
+   so the layer never takes the page underneath out of hover. */
+#chart-tooltip-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  overflow: hidden;
+  pointer-events: none;
+}
+</style>
 </head>
 <body>
-<main>
-<header>
-  <h1>zkEVM guest cost profile</h1>
-  <nav class="tabs" id="tabs" aria-label="zkVM"></nav>
-</header>
+<div id="app"></div>
+<!-- Host for the chart tooltips. Fixed and clipped to the viewport, so a tooltip left positioned
+     where it was raised cannot widen the page once the window has narrowed under it. -->
+<div id="chart-tooltip-layer"></div>
+<script type="module">
+import { render } from 'preact';
+import {
+  useEffect,
+  useErrorBoundary,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'preact/hooks';
+import { signal } from '@preact/signals';
+import { html } from 'htm/preact';
+import * as echarts from 'echarts';
 
-<section class="card" id="run-card">
-  <h2>Run</h2>
-  <dl id="run"></dl>
-</section>
+/* How every figure on the page is printed. A fixture name and a guest version both come from JSON
+   and both reach the DOM, so text goes in as text and only the chart tooltips, which take markup,
+   escape an interpolation on the way in. */
 
-<section class="card" id="cost-card">
-  <h2>Overview</h2>
-  <p>Empirically cost gaps overstate proving time gaps, so take the cost relative as a reference rather than a proving time prediction.</p>
-  <div class="scroller">
-    <table id="cost">
-      <thead><tr><th data-sort="text">Stateless validator</th><th>Version</th><th data-sort="number">Avg cost</th><th data-sort="number">Avg peak heap</th><th>ELF</th></tr></thead>
-      <tbody></tbody>
-    </table>
+const SI_STEPS = [
+  [1e12, 'T'],
+  [1e9, 'G'],
+  [1e6, 'M'],
+  [1e3, 'k'],
+];
+
+/* Mirrors the SI formatting .github/scripts/report.py applies to the markdown tables. It takes the
+   value alone, since echarts hands an axis formatter the tick index as a second argument. */
+function si(value) {
+  for (const [limit, suffix] of SI_STEPS) {
+    if (Math.abs(value) >= limit) return (value / limit).toFixed(2) + suffix;
+  }
+  return value.toFixed(0);
+}
+
+/* A gas tick that lands on a whole magnitude reads as that magnitude alone. A zoomed axis keeps its
+   digits, which is what tells its ticks apart once they sit within a million gas of each other. */
+const gasTick = (value) => si(value).replace('.00', '');
+
+const BYTE_STEPS = [
+  [1024 ** 3, 'GiB'],
+  [1024 ** 2, 'MiB'],
+  [1024, 'KiB'],
+];
+
+/* Peak heap is a memory figure, which reads in binary units while a cost reads in decimal ones. */
+function bytes(value) {
+  for (const [limit, unit] of BYTE_STEPS) {
+    if (Math.abs(value) >= limit) return (value / limit).toFixed(2) + ' ' + unit;
+  }
+  return value.toFixed(0) + ' B';
+}
+
+/* Two decimals wherever a figure is stated against the smallest of the runs shown. */
+const ratio = (value) => value.toFixed(2) + 'x';
+
+/* A share of a whole stated on the same row as that whole, so the two never have to be divided by
+   eye. */
+const percent = (value) => (value * 100).toFixed(1) + '%';
+
+/* The figure at a rank in a sorted run of them, taken at the nearest sample rather than interpolated,
+   so every bound a filter states is a figure some block actually carries. */
+const quantile = (sorted, fraction) =>
+  sorted[Math.min(sorted.length - 1, Math.max(0, Math.round(fraction * (sorted.length - 1))))];
+
+/* UTC rather than the reader's own zone, so two readers quoting a run name the same minute. */
+const stamp = (seconds) =>
+  new Date(seconds * 1000).toISOString().replace('T', ' ').slice(0, 16) + ' UTC';
+
+/* The first and last four digits tell two builds apart at a glance, while the run still carries the
+   whole hash. A run recorded without one shows nothing. */
+const shortSha256 = (sha256) =>
+  sha256 ? '0x' + sha256.slice(0, 4) + '...' + sha256.slice(-4) : '';
+
+/* What names a fixture pulled off the chain, whose own name is the tool that pulled it and a hash,
+   and which is therefore read by the block it holds. Any other corpus is synthetic and carries what
+   it exercises in its own name. */
+const RPC_FIXTURE = 'witness-generator-spec-cli';
+
+const fromChain = (name) => String(name).includes(RPC_FIXTURE);
+
+/* A URL a profile carries, or nothing when it names anything other than a published asset. The page
+   puts these straight into an href, and escaping keeps a value out of the markup but not out of the
+   scheme, so the scheme is what is checked. */
+const external = (url) => (typeof url === 'string' && url.startsWith('https://') ? url : null);
+
+/* Value of a theme token, which is where the charts and the guest colours take their palette from,
+   so it is defined in the stylesheet alone. */
+const token = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+/* A tooltip is markup rather than a node, so every value put in one is escaped here. */
+const escaped = (value) => String(value).replace(/[&<>"']/g, (character) => ESCAPES[character]);
+
+const DASH = '-';
+
+/* Where the page gets its numbers and every figure it derives from them. Runs drawn together are
+   compared over the fixtures they all profiled, never over their own, which is the rule
+   .github/scripts/report.py enforces and the reason a run that failed on some fixtures cannot come
+   out cheaper for having skipped them. */
+
+async function json(path, missing) {
+  const response = await fetch(path, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(missing + ' (' + response.status + ' ' + response.statusText + ')');
+  }
+  return response.json();
+}
+
+/* What a run is called in a route, which is when it was taken and what it profiled. */
+const runId = (run) => run.generated_at + '-' + run.stateless_validator + '-' + run.zkvm;
+
+/* Where a run's profile sits, which is the guest, the ELF it measured and the corpus it covers. The
+   index names those rather than the path they compose, a path reading as a location rather than as a
+   name. The harness that measured a run is the profile's own and names no directory, so a release
+   supersedes the run it re-measures. */
+const runPath = (run) =>
+  [run.stateless_validator, run.elf_sha256.slice(0, 16), run.suite].join('/');
+
+/* Read again for every page, since a run published while a reader has the page open is what they
+   are looking for when they go back to the listing. */
+async function loadIndex() {
+  const index = await json('profiles/index.json', 'No profile index published');
+  const runs = index.runs.map((run) => ({ ...run, runId: runId(run) }));
+  return { runs, byRunId: new Map(runs.map((run) => [run.runId, run])) };
+}
+
+/* The suites in the order the registry lists them. A page served without it lists no suite rather
+   than failing, since the runs name their own suite anyway. */
+async function loadSuites() {
+  try {
+    const registry = await json('suite-registry.json', 'No suite registry published');
+    return Object.entries(registry).map(([name, suite]) => ({ name, ...suite }));
+  } catch {
+    return [];
+  }
+}
+
+/* How large the corpus a run covers is, which is what the blocks it profiled are stated out of. A
+   suite the registry leaves out has no size to state, and the run then reports its own count
+   alone. */
+async function loadSuiteBlocks() {
+  const suites = await loadSuites();
+  const sizes = new Map(suites.map((suite) => [suite.name, suite.blocks.length]));
+  return (entry) => sizes.get(entry.suite) ?? null;
+}
+
+/* Keyed on the path a run's file sits at, which names the ELF and the harness version, so what sits
+   at it never changes and a profile of a thousand fixtures is held for the session rather than
+   fetched again by the next page to draw it. */
+const profiles = new Map();
+
+function loadRun(entry) {
+  const path = runPath(entry);
+  if (!profiles.has(path)) {
+    profiles.set(path, json('profiles/' + path + '.json', 'No profile published for ' + entry.runId));
+  }
+  return profiles.get(path);
+}
+
+function sharedFixtures(runs) {
+  const [first, ...rest] = runs.map((run) => Object.keys(run.profile));
+  const held = rest.map((names) => new Set(names));
+  return first.filter((name) => held.every((names) => names.has(name))).sort();
+}
+
+/* Corpus sums over the shared fixtures, and the per fixture and mean figures taken off them. A
+   ratio is left to the point of display, where the set of runs it is stated against is known. */
+function statistics(run, fixtures) {
+  const entries = fixtures.map((name) => run.profile[name]);
+  const total = entries.reduce((sum, entry) => sum + entry.cost.total, 0);
+  const heaps = entries.filter((entry) => entry.peak_heap_bytes != null);
+  const point = (name, value) => [
+    run.profile[name].metadata.gas_used,
+    value,
+    run.profile[name].metadata.block_number,
+    name,
+  ];
+  const byGas = (left, right) => left[0] - right[0];
+  return {
+    fixtures: fixtures.length,
+    total,
+    components: run.meta.composition.map((kind) =>
+      entries.reduce((sum, entry) => sum + entry.cost[kind.name], 0)
+    ),
+    meanCost: total / fixtures.length,
+    // The mean over the fixtures that recorded a peak, since one figure per run is there to compare
+    // how much memory a corpus takes rather than to size a machine for the worst fixture.
+    peakHeapMean: heaps.length
+      ? heaps.reduce((sum, entry) => sum + entry.peak_heap_bytes, 0) / heaps.length
+      : null,
+    points: fixtures.map((name) => point(name, run.profile[name].cost.total)).sort(byGas),
+    heapPoints: fixtures
+      .filter((name) => run.profile[name].peak_heap_bytes != null)
+      .map((name) => point(name, run.profile[name].peak_heap_bytes))
+      .sort(byGas),
+  };
+}
+
+/* Figures a listing shows are taken over each run's own fixtures, since a listing states what a run
+   profiled rather than comparing it with the run beside it. */
+const ownStatistics = (run) => statistics(run, sharedFixtures([run]));
+
+const kindNames = (entry) => entry.composition.map((kind) => kind.name).join(',');
+
+/* Costs from two zkVMs are in different units and costs from two SDK versions come from different
+   circuits, so neither pair may be drawn on one axis, and two corpora have no block in common to be
+   compared over. */
+const comparable = (a, b) =>
+  a.version === b.version &&
+  a.zkvm === b.zkvm &&
+  a.zkvm_version === b.zkvm_version &&
+  a.suite === b.suite &&
+  kindNames(a) === kindNames(b);
+
+/* The newest run of each guest on each zkVM and corpus, so a guest that was profiled again is stated
+   once. The ELF is no part of the key, a rebuilt guest being the same guest. */
+function recentRuns(entries) {
+  const key = (entry) => [entry.stateless_validator, entry.zkvm, entry.suite].join('/');
+  const newest = new Map();
+  for (const entry of entries) {
+    const held = newest.get(key(entry));
+    if (!held || entry.generated_at > held.generated_at) newest.set(key(entry), entry);
+  }
+  return [...newest.values()];
+}
+
+/* Slot order rather than 1..8, since adjacent guests have to stay apart under colour-blind
+   simulation and the guests start on a different hue from the kinds, so the first line of a chart
+   and the first segment of a bar never share a colour. */
+const LINE_COLORS = [6, 1, 7, 2, 3, 5, 8, 4].map((step) => token('--cat-' + step));
+
+/* Stateless validators the registry names, in the order they take their colour in. Sorting the
+   union of the zkVMs' entries keys the order on the registry's content alone, so no page has to
+   load before another for a guest to come out the same colour. A page served without the registry
+   leaves the list empty, which still colours every guest and still colours it the same everywhere,
+   and gives up only the guarantee that two named guests stay apart. */
+const statelessValidators = await (async () => {
+  try {
+    const registry = await json('elf-registry.json', 'No ELF registry published');
+    const names = Object.values(registry).flatMap((entries) =>
+      entries.map((entry) => entry['stateless-validator'])
+    );
+    return [...new Set(names)].sort();
+  } catch {
+    return [];
+  }
+})();
+
+/* A guest the registry leaves out takes one of the slots the named guests do not, drawn from its
+   own name so it too holds from page to page. */
+function slot(name) {
+  const named = statelessValidators.indexOf(name);
+  if (named >= 0) return named;
+  const free = Math.max(LINE_COLORS.length - statelessValidators.length, 1);
+  const letters = Array.from(name).reduce((sum, letter) => sum + letter.charCodeAt(0), 0);
+  return statelessValidators.length + (letters % free);
+}
+
+/* A guest takes its colour from its own name rather than from its place in a list, so switching
+   pages never repaints it and a guest missing from one chart does not shift the guests below it. */
+const guestColors = (names) =>
+  Object.fromEntries(names.map((name) => [name, LINE_COLORS[slot(name) % LINE_COLORS.length]]));
+
+/* Route parsing and page dispatch. A deep link is a real request, since a path no file sits at is
+   served the shell, and every link from there is answered in place. */
+
+const BASE = new URL(document.baseURI).pathname;
+
+/* The one form a route is stated in, which carries no trailing slash, so a link followed, an address
+   pasted and a page reloaded all read the same. The root stands for the run list, which is the page
+   the site opens on. */
+const canonical = (path) => path.replace(/\/$/, '') || 'runs';
+
+const here = () => canonical(location.pathname.slice(BASE.length)) + location.search;
+
+const route = signal(here());
+
+function navigate(href) {
+  const url = new URL(href, document.baseURI);
+  // A link to the page already open replaces the entry it stands on rather than stacking another,
+  // so going back leaves the page rather than arriving at it again.
+  const move = url.href === location.href ? history.replaceState : history.pushState;
+  move.call(history, null, '', url);
+  route.value = here();
+  scrollTo(0, 0);
+}
+
+addEventListener('popstate', () => {
+  route.value = here();
+});
+
+/* A link within the page, which is answered without a reload. Anything the reader means to open
+   elsewhere, and any modified click, is left to the browser. */
+const Link = ({ href, children, ...rest }) => html`
+  <a
+    href=${href}
+    ...${rest}
+    onClick=${(event) => {
+      if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      navigate(href);
+    }}>
+    ${children}
+  </a>
+`;
+
+/* Where a set of runs is drawn together, named by run id so the link stays readable. */
+const compareUrl = (ids) => 'compare?' + new URLSearchParams({ runs: ids.join(',') });
+
+/* The furniture a panel is drawn out of, and the two controls every panel states a choice with. */
+
+const Card = ({ title, control, children }) => html`
+  <div class="card">
+    <div class="card-head">
+      <h2>${title}</h2>
+      ${control}
+    </div>
+    ${children}
   </div>
-</section>
+`;
 
-<section class="card hidden" id="composition-card">
-  <h2>Cost composition</h2>
-  <div id="composition" class="chart"></div>
-  <ul class="note" id="composition-note"></ul>
-</section>
+const ErrorCard = ({ message }) => html`
+  <${Card} title="Error"><p class="empty">${message}</p><//>
+`;
 
-<section class="card" id="gas-card">
-  <h2>Cost against Gas Usage</h2>
-  <div id="gas" class="chart"></div>
-</section>
+const Field = ({ label, children }) => html`
+  <div class="field">
+    <span class="field-label">${label}</span>
+    <span class="field-value">${children}</span>
+  </div>
+`;
 
-<section class="card hidden" id="heap-card">
-  <h2>Peak Heap against Gas Usage</h2>
-  <div id="heap" class="chart"></div>
-</section>
+const FieldStrip = ({ children }) => html`<div class="field-strip">${children}</div>`;
 
-<p id="error" hidden></p>
-</main>
-<script src="report.js"></script>
+const Pill = ({ children, ...rest }) => html`
+  <button type="button" class="pill" ...${rest}>${children}</button>
+`;
+
+/* A chip names a column and reports whether the list is answering with it. */
+const Chip = ({ pressed, children, ...rest }) => html`
+  <button type="button" class="chip" aria-pressed=${String(pressed)} ...${rest}>${children}</button>
+`;
+
+/* Chips under the question they answer. */
+const ChipSet = ({ label, children }) => html`
+  <div class="chips"><span class="chip-set-label">${label}</span>${children}</div>
+`;
+
+const toggledValue = (held, value) =>
+  held.includes(value) ? held.filter((it) => it !== value) : [...held, value];
+
+const toggled = (held, label) => {
+  const next = new Set(held);
+  if (next.has(label)) next.delete(label);
+  else next.add(label);
+  return next;
+};
+
+/*
+ * A span of a distribution, set by dragging either end.
+ *
+ * A thumb steps over the distinct figures the corpus holds rather than over the interval they span
+ * or the blocks carrying them. A corpus that bills nine blocks in ten the same gas would otherwise
+ * answer three quarters of the track with one threshold, and a cost running over five orders of
+ * magnitude would crowd nearly every block into the first pixel of it. Stepping the figures gives
+ * each of them a position of its own either way, and what is printed under a thumb is the figure it
+ * bounds at.
+ *
+ * The pair is committed when a thumb is let go rather than while it moves, since a table of a
+ * thousand rows cannot be redrawn every pixel, and the printed bounds follow the drag so the reader
+ * sees where they are landing.
+ */
+function Range({ label, domain, value, print, onChange }) {
+  const [dragged, setDragged] = useState(null);
+  const [low, high] = dragged ?? value;
+  const last = domain.length - 1;
+  const lowIndex = domain.indexOf(low);
+  const highIndex = domain.indexOf(high);
+  const share = (index) => (index / last) * 100;
+
+  const set = (next, committed) => {
+    if (!committed) return setDragged(next);
+    setDragged(null);
+    onChange(next);
+  };
+  const lower = (event, committed) =>
+    set([domain[Math.min(+event.currentTarget.value, highIndex)], high], committed);
+  const upper = (event, committed) =>
+    set([low, domain[Math.max(+event.currentTarget.value, lowIndex)]], committed);
+
+  return html`
+    <div>
+      <span class="filter-label">${label}</span>
+      <div class="range">
+        <div class="range-track"></div>
+        <div
+          class="range-span"
+          style=${'left:' + share(lowIndex) + '%;right:' + (100 - share(highIndex)) + '%'}></div>
+        <!-- The pair sits in one box, so the thumb the pointer can reach is whichever input is on
+             top. The lower end is raised past the midpoint, where the upper one would otherwise
+             cover it. -->
+        <input
+          type="range"
+          min="0"
+          max=${last}
+          value=${lowIndex}
+          aria-label=${label + ', lower bound'}
+          style=${lowIndex > last / 2 ? 'z-index:1' : null}
+          onInput=${(event) => lower(event, false)}
+          onChange=${(event) => lower(event, true)} />
+        <input
+          type="range"
+          min="0"
+          max=${last}
+          value=${highIndex}
+          aria-label=${label + ', upper bound'}
+          onInput=${(event) => upper(event, false)}
+          onChange=${(event) => upper(event, true)} />
+      </div>
+      <div class="range-bounds"><span>${print(low)}</span><span>${print(high)}</span></div>
+    </div>
+  `;
+}
+
+/* A dimension answered by any of the values its rows take, offered as one chip each. */
+function Choice({ label, domain, value, print, onChange }) {
+  return html`
+    <div>
+      <span class="filter-label">${label}</span>
+      <div class="chips" role="group" aria-label=${label}>
+        ${domain.map(
+          (option) => html`
+            <${Chip}
+              key=${option}
+              pressed=${value.includes(option)}
+              onClick=${() => onChange(toggledValue(value, option))}>
+              ${print(option)}
+            <//>
+          `
+        )}
+      </div>
+    </div>
+  `;
+}
+
+/* Opens under the chip that raised it, and closes on the next press outside it or on Escape, so a
+   reader working inside it is not interrupted and one done with it is not left holding it open. */
+function Menu({ label, open, answering, onOpen, children }) {
+  const anchor = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const dismiss = (event) => {
+      if (!anchor.current.contains(event.target)) onOpen(false);
+    };
+    const escape = (event) => {
+      if (event.key !== 'Escape') return;
+      onOpen(false);
+      anchor.current.querySelector('button').focus();
+    };
+    document.addEventListener('pointerdown', dismiss);
+    document.addEventListener('keydown', escape);
+    return () => {
+      document.removeEventListener('pointerdown', dismiss);
+      document.removeEventListener('keydown', escape);
+    };
+  }, [open]);
+
+  return html`
+    <span class="menu-anchor" ref=${anchor}>
+      <${Chip}
+        pressed=${answering}
+        aria-expanded=${String(open)}
+        onClick=${() => onOpen(!open)}>
+        ${label}
+      <//>
+      ${open && html`<div class="menu">${children}</div>`}
+    </span>
+  `;
+}
+
+/*
+ * How a dimension is answered. A range is bounded between two of the figures its rows carry, and a
+ * choice is answered by any of the values they take. Both say when an answer covers the whole of
+ * what the dimension offers, which is what lets a filter narrowing nothing be dropped rather than
+ * held as one that is on and doing nothing.
+ */
+/* Nothing answered, held rather than built so that clearing what is already clear redraws
+   nothing. */
+const EMPTY_ANSWERS = {};
+
+/* Stood in for an absent list, since a default parameter builds a fresh one on every render and no
+   memo keyed on it would ever hold. */
+const NOTHING = [];
+
+const RANGE = {
+  control: (props) => html`<${Range} ...${props} />`,
+  sorted: (values) => values.sort((left, right) => left - right),
+  whole: (domain) => [domain[0], domain[domain.length - 1]],
+  covers: (answer, domain) => answer[0] <= domain[0] && answer[1] >= domain[domain.length - 1],
+  matches: (answer, value) => value != null && value >= answer[0] && value <= answer[1],
+  /* The tail past a percentile, taken at the rank in the rows rather than in the figures so that it
+     names the share of them it says. One tail replaces another, there being one bound to set. */
+  tail: (from, { values, domain }) => [quantile(values, from / 100), domain[domain.length - 1]],
+  presetPressed: (from, scale, held) => {
+    const [low, high] = RANGE.tail(from, scale);
+    return held != null && held[0] === low && held[1] === high;
+  },
+  presetAnswer: (from, scale, held, pressed) =>
+    pressed ? RANGE.whole(scale.domain) : RANGE.tail(from, scale),
+  presetLabel: (from, dimension) => 'P' + from + ' ' + dimension.label,
+};
+
+const CHOICE = {
+  control: (props) => html`<${Choice} ...${props} />`,
+  sorted: (values) => values.sort(),
+  whole: () => [],
+  // Answering with none of the values reads as answering with all of them, so neither narrows.
+  covers: (answer) => answer.length === 0,
+  matches: (answer, value) => answer.includes(value),
+  /* A shortcut answers the way a chip in the panel does, the two being the same control over the
+     same dimension, so pressing two of them holds both. */
+  presetPressed: (from, scale, held) => held != null && held.includes(from),
+  presetAnswer: (from, scale, held) => toggledValue(held ?? [], from),
+  presetLabel: (from, dimension) => dimension.print(from),
+};
+
+/*
+ * What a listing is narrowed by, one answer per dimension and held only for the dimensions actually
+ * narrowing, so a listing narrowed by nothing carries nothing.
+ *
+ * A dimension every row answers the same way is left out rather than offered as a control that
+ * cannot move, and a row a dimension has no value for is dropped by any answer to it, the same way
+ * it sinks under a sort of that column.
+ */
+function useFilters(dimensions, rows) {
+  const [answers, setAnswers] = useState(EMPTY_ANSWERS);
+  const [configuring, setConfiguring] = useState(false);
+
+  const scales = useMemo(() => {
+    const held = new Map();
+    for (const dimension of dimensions) {
+      const values = dimension.kind.sorted(
+        rows.map(dimension.of).filter((value) => value != null)
+      );
+      const domain = [...new Set(values)];
+      if (domain.length > 1) held.set(dimension.key, { values, domain });
+    }
+    return held;
+  }, [dimensions, rows]);
+
+  /* Normalised so that everything drawing a dimension can print a value without asking whether it
+     has a way to, a value that is already its own label needing none. */
+  const offered = useMemo(
+    () =>
+      dimensions
+        .filter((dimension) => scales.has(dimension.key))
+        .map((dimension) => ({ print: (value) => value, ...dimension })),
+    [dimensions, scales]
+  );
+
+  const answer = (dimension, next) =>
+    setAnswers((held) => {
+      const kept = { ...held };
+      if (dimension.kind.covers(next, scales.get(dimension.key).domain)) delete kept[dimension.key];
+      else kept[dimension.key] = next;
+      return kept;
+    });
+
+  return {
+    answers,
+    scales,
+    offered,
+    answer,
+    configuring,
+    setConfiguring,
+    narrowing: Object.keys(answers).length > 0,
+    /* The answer a control opens at, which is the whole of what the dimension offers until one is
+       set. */
+    held: (dimension) =>
+      answers[dimension.key] ?? dimension.kind.whole(scales.get(dimension.key).domain),
+    keep: (row) =>
+      offered.every((dimension) => {
+        const held = answers[dimension.key];
+        return held == null || dimension.kind.matches(held, dimension.of(row));
+      }),
+    clear: () => setAnswers(EMPTY_ANSWERS),
+  };
+}
+
+/* A dimension answered in one press, released by pressing again. A range is set to the tail past a
+   percentile, taken at the rank in the rows rather than in the figures so that it names the share of
+   them it says, and a choice to the one value named. */
+function Preset({ filters, dimension, from }) {
+  const scale = filters.scales.get(dimension.key);
+  const held = filters.answers[dimension.key];
+  const pressed = dimension.kind.presetPressed(from, scale, held);
+  return html`
+    <${Chip}
+      pressed=${pressed}
+      onClick=${() =>
+        filters.answer(dimension, dimension.kind.presetAnswer(from, scale, held, pressed))}>
+      ${dimension.kind.presetLabel(from, dimension)}
+    <//>
+  `;
+}
+
+/* The one row a listing is narrowed from, which is a preset per shortcut the dimensions name, the
+   panel holding a control for each of them and, once something is narrowing, what it left and the
+   way back. */
+const Filters = ({ filters, kept, total, children }) => html`
+  <${ChipSet} label="Filter">
+    ${children}
+    ${filters.offered.flatMap((dimension) =>
+      (dimension.presets?.(filters.scales.get(dimension.key).domain) ?? []).map(
+        (from) =>
+          html`<${Preset} key=${dimension.key + ':' + from} filters=${filters}
+            dimension=${dimension} from=${from} />`
+      )
+    )}
+    <!-- The chip reports an answer set anywhere behind it, since a listing narrowed from a panel
+         that is closed again would otherwise say so nowhere. -->
+    <${Menu}
+      label="Configure"
+      open=${filters.configuring}
+      answering=${filters.narrowing}
+      onOpen=${filters.setConfiguring}>
+      ${filters.offered.map((dimension) =>
+        dimension.kind.control({
+          key: dimension.key,
+          label: dimension.label,
+          domain: filters.scales.get(dimension.key).domain,
+          value: filters.held(dimension),
+          print: dimension.print,
+          onChange: (next) => filters.answer(dimension, next),
+        })
+      )}
+    <//>
+    ${filters.narrowing &&
+    html`
+      <span class="filter-count">${kept} of ${total}</span>
+      <${Pill} onClick=${filters.clear}>Clear<//>
+    `}
+  <//>
+`;
+
+/* What a listing may be broken up by, one chip per layer. */
+const GroupChips = ({ groups, grouping, onToggle }) => html`
+  <${ChipSet} label="Group by">
+    ${groups.map(
+      (group) => html`
+        <${Chip}
+          key=${group.label}
+          pressed=${grouping.has(group.label)}
+          onClick=${() => onToggle(group.label)}>
+          ${group.label}
+        <//>
+      `
+    )}
+  <//>
+`;
+
+/*
+ * A long identifier is cut to what its column leaves it, so no one column sets the width of the
+ * table. The whole value stands in an overlay the cut text raises, which reaches over the column to
+ * its right. A column that states a bound is cut to that instead.
+ *
+ * The overlay is raised by the pointer alone rather than by a measurement of whether the text was
+ * cut, so it opens on the frame the pointer arrives rather than after one. A value the column had
+ * room for is covered by an overlay carrying the same text at the same place, which is what makes
+ * leaving the two indistinguishable cost a reader nothing.
+ *
+ * A caller stating a value that cannot outrun its column asks for none, since raising a box over a
+ * value already read whole only takes the control beside it down.
+ */
+function Truncate({ text, width, overlay = true }) {
+  return html`
+    <span class="truncate" style=${width ? '--truncate-width:' + width + 'px' : null}>
+      <span class="truncate-text">${text}</span>
+      ${overlay && html`<span class="truncate-full">${text}</span>`}
+    </span>
+  `;
+}
+
+/* Drawn rather than lettered, so a cell carries nothing a sort or a screen reader would read as a
+   value of the column. */
+const Glyph = ({ children }) => html`
+  <svg
+    viewBox="0 0 24 24"
+    width="13"
+    height="13"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    aria-hidden="true">
+    ${children}
+  </svg>
+`;
+
+/* One spelling of a corpus as a link, since a run, a run's own page and a comparison all name the
+   corpus they cover. */
+const SuiteLink = ({ suite }) => html`<${Link} href=${'suites/' + suite}>${suite}<//>`;
+
+/* A run profiled from a local ELF, or from a build artifact the GitHub API serves under no stable
+   URL, has nothing to point at, which a field states and a cell leaves blank. */
+function ElfLink({ url, label, fallback = null }) {
+  const href = external(url);
+  if (!href) return fallback;
+  return html`
+    <a href=${href} aria-label=${'ELF of ' + label}>
+      <${Glyph}>
+        <path d="M15 3h6v6" />
+        <path d="M10 14 21 3" />
+        <path d="M19 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h6" />
+      <//>
+    </a>
+  `;
+}
+
+/* Long enough to be seen and short enough that the button is back before it is wanted again. */
+const COPIED_FOR = 1200;
+
+/* The clipboard API is refused outside a secure context, which a checkout served over plain HTTP is,
+   so the copy falls back to a selection the document takes. */
+async function toClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch {
+    const holder = document.createElement('textarea');
+    holder.style.cssText = 'position:fixed;top:-100px;opacity:0';
+    holder.value = text;
+    document.body.appendChild(holder);
+    holder.select();
+    document.execCommand('copy');
+    holder.remove();
+  }
+}
+
+/* A value too long for any column, put on the clipboard whole and reporting what it did by becoming
+   a tick. */
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false);
+  return html`
+    <button
+      type="button"
+      class="icon-button"
+      aria-label=${label}
+      onClick=${async () => {
+        await toClipboard(text);
+        setCopied(true);
+        setTimeout(() => setCopied(false), COPIED_FOR);
+      }}>
+      ${copied
+        ? html`<${Glyph}><path d="M20 6 9 17l-5-5" /><//>`
+        : html`<${Glyph}>
+            <rect x="9" y="9" width="13" height="13" rx="2" />
+            <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+          <//>`}
+    </button>
+  `;
+}
+
+/* The one table on the site, so every table shares a header, a sort and a row treatment. A column
+   declares how it renders and, when it has a place on a scale, what it sorts on. The table holds the
+   order alone, since a caller that folds or selects has its own control to draw for it. */
+
+const ARROWS = { ascending: '\u25B2', descending: '\u25BC' };
+
+/* The triangles the sort arrows are drawn from rather than the small ones, so a heading's marker and
+   a column's read at one size. */
+const DISCLOSURE = { open: '\u25BC', closed: '\u25B6' };
+
+/* Nothing folded and nothing selected, held rather than built so that emptying what is already empty
+   redraws nothing. Every reader of a set copies it before changing it. */
+const EMPTY_SET = new Set();
+
+/* Only the caller knows which of its columns hold figures, so the alignment is written onto the
+   cells. A column may also declare that it takes the width the others leave, its content cut to
+   whatever that turns out to be. */
+const cellClass = (column) =>
+  [column.fill && 'fill', column.align === 'right' && 'right'].filter(Boolean).join(' ') || null;
+
+/*
+ * The two shapes a column comes in. `of` is the value the column holds, which is what it sorts on
+ * and, unless the column states otherwise, what it prints.
+ *
+ * A figure is right aligned so that two magnitudes line up digit over digit, and a row with none is
+ * a dash rather than a formatted nothing, which is also what puts it at the bottom under either
+ * direction.
+ */
+const column = (key, header, of, render) => ({ key, header, render: render ?? of, sortValue: of });
+
+const figureColumn = (key, header, of, print) => ({
+  key,
+  header,
+  align: 'right',
+  render: (row) => (of(row) == null ? DASH : print(of(row), row)),
+  sortValue: of,
+});
+
+function DataTable({
+  columns,
+  rows,
+  rowKey,
+  initialSort,
+  groupBy,
+  groupControl,
+  foldable,
+  folded = EMPTY_SET,
+  onFold,
+  height = 'capped',
+  selection,
+  empty,
+}) {
+  const [sort, setSort] = useState(initialSort ?? null);
+  const wrapper = useRef(null);
+
+  /* A table wider than its panel scrolls sideways, which would carry a group's heading and whatever
+     it holds off the edge with it. The heading is pinned to the scrollport and sized to it, so both
+     stay in view however far the columns have been scrolled. */
+  useEffect(() => {
+    const observer = new ResizeObserver(() =>
+      wrapper.current.style.setProperty('--scrollport', wrapper.current.clientWidth + 'px')
+    );
+    observer.observe(wrapper.current);
+    return () => observer.disconnect();
+  }, []);
+
+    /* A column that claims the slack leaves none for a column of its own to claim. */
+  const filling = columns.some((column) => column.fill);
+  const span = columns.length + (filling ? 0 : 1) + (selection ? 1 : 0);
+
+  const ordered = useMemo(() => {
+    const column = sort && columns.find((candidate) => candidate.key === sort.key);
+    if (!column?.sortValue) return rows;
+    const direction = sort.direction === 'ascending' ? 1 : -1;
+    return [...rows].sort((left, right) => {
+      const first = column.sortValue(left);
+      const second = column.sortValue(right);
+      // A row with no value for the sorted column has no place on its scale, so it sinks to the
+      // bottom under either direction.
+      if (first == null && second == null) return 0;
+      if (first == null) return 1;
+      if (second == null) return -1;
+      if (typeof first === 'number' && typeof second === 'number') {
+        return (first - second) * direction;
+      }
+      return String(first).localeCompare(String(second)) * direction;
+    });
+  }, [rows, sort, columns]);
+
+  /* The rows under each group heading, in key order while their own order stays the one the sorted
+     column puts them in. A row the grouping leaves unkeyed carries no heading of its own. */
+  const groups = useMemo(() => {
+    if (!groupBy) return null;
+    const held = new Map();
+    for (const row of ordered) {
+      const key = groupBy(row);
+      if (!held.has(key)) held.set(key, []);
+      held.get(key).push(row);
+    }
+    return [...held.entries()].sort(([left], [right]) =>
+      left == null ? -1 : right == null ? 1 : left.localeCompare(right)
+    );
+  }, [ordered, groupBy]);
+
+  /* An unsorted column opens ascending and the sorted one reverses, so a second click on the column
+     in force reads it from the other end. */
+  const reorder = (key) =>
+    setSort({
+      key,
+      direction:
+        sort?.key === key && sort.direction === 'ascending' ? 'descending' : 'ascending',
+    });
+
+  const headerCell = (column) => {
+    const active = sort?.key === column.key;
+    if (!column.sortValue) {
+      return html`<th class=${cellClass(column)}>${column.header}</th>`;
+    }
+    return html`
+      <th class=${cellClass(column)} aria-sort=${active ? sort.direction : null}>
+        <button type="button" onClick=${() => reorder(column.key)}>
+          ${column.header}
+          <!-- The glyph is in the header whether or not the column is the sorted one, so ordering
+               by a column never reflows it. -->
+          <span aria-hidden="true" style=${active ? null : 'visibility:hidden'}>
+            ${ARROWS[active ? sort.direction : 'ascending']}
+          </span>
+        </button>
+      </th>
+    `;
+  };
+
+  const bodyRow = (row) => {
+    const key = rowKey(row);
+    const chosen = selection != null && selection.selected.has(key);
+    return html`
+      <tr key=${key} class=${chosen ? 'row-selected' : null}>
+        ${selection &&
+        html`<td>
+          <input
+            type="checkbox"
+            aria-label=${'Select ' + key}
+            checked=${chosen}
+            disabled=${!selection.enabled(row)}
+            onChange=${(event) => selection.onChange(key, event.currentTarget.checked)} />
+        </td>`}
+        ${columns.map(
+          (column) => html`<td class=${cellClass(column)}>${column.render(row)}</td>`
+        )}
+        ${!filling && html`<td class="spacer"></td>`}
+      </tr>
+    `;
+  };
+
+  /* The heading names the group on the left and holds whatever the caller offers for it on the
+     right, which is one row rather than a column of its own. A group that holds its rows back names
+     how many, since folded they cannot be counted. */
+  const groupRow = (key, held) => {
+    const open = !folded.has(key);
+    return html`
+      <tr class="group-row" key=${'group:' + key}>
+        <td colspan=${span}>
+          <div class="group-head">
+            ${foldable
+              ? html`<button
+                  type="button"
+                  class="group-toggle"
+                  aria-expanded=${String(open)}
+                  onClick=${() => onFold(key)}>
+                  <span aria-hidden="true">${open ? DISCLOSURE.open : DISCLOSURE.closed}</span>
+                  ${key}
+                  <span class="group-count">${held.length}</span>
+                </button>`
+              : html`<span>${key}</span>`}
+            ${groupControl?.(held)}
+          </div>
+        </td>
+      </tr>
+    `;
+  };
+
+  const body = () => {
+    if (!rows.length) {
+      // Taken when the table is drawn, so a table the caller filters says which of the two empty
+      // states it is in.
+      const state = typeof empty === 'function' ? empty() : empty;
+      return html`<tr><td class="empty" colspan=${span}>${state}</td></tr>`;
+    }
+    if (!groups) return ordered.map(bodyRow);
+    return groups.map(([key, held]) =>
+      key == null
+        ? held.map(bodyRow)
+        : [groupRow(key, held), ...(folded.has(key) ? [] : held.map(bodyRow))]
+    );
+  };
+
+  return html`
+    <div class=${['table-wrap', height].filter(Boolean).join(' ')} ref=${wrapper}>
+      <table class="data-table">
+        <thead>
+          <tr>
+            ${selection && html`<th></th>`}
+            ${columns.map(headerCell)}
+            <!-- Takes the width the columns do not, so each of them is as wide as what it holds and
+                 the row still rules across the table. A table with a column that fills needs
+                 none. -->
+            ${!filling && html`<th class="spacer"></th>`}
+          </tr>
+        </thead>
+        <tbody>
+          ${body()}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+/*
+ * The groups a listing holds back, which the reader closes and opens one at a time by a heading's
+ * own triangle and whole from the control beside the listing. Taken over the rows now drawn rather
+ * than over the whole listing, so a control used under a filter closes what the filter left and
+ * clearing it turns up no group the reader never saw.
+ */
+function useFolding(rows, groupKey, grouping) {
+  const [folded, setFolded] = useState(EMPTY_SET);
+  /* Whether the control closed everything, which only the control itself sets. A group the reader
+     opened by its own triangle leaves the control offering the unfold it was last used for. */
+  const [closedAll, setClosedAll] = useState(false);
+
+  /* A grouping the reader changed draws headings the held keys no longer name, so what was held
+     back is released along with them. */
+  useEffect(() => {
+    setFolded(EMPTY_SET);
+    setClosedAll(false);
+  }, [grouping]);
+
+  const closeAll = (all) => {
+    setClosedAll(all);
+    setFolded(all ? new Set(rows.map(groupKey).filter((key) => key != null)) : EMPTY_SET);
+  };
+
+  const fold = (key) => setFolded((held) => toggled(held, key));
+
+  return { folded, closedAll, closeAll, fold };
+}
+
+/* Closes and opens every group at once, and stands down where a listing is broken up by nothing and
+   has none to close. */
+const FoldPill = ({ folding, enabled }) => html`
+  <${Pill} disabled=${!enabled} onClick=${() => folding.closeAll(!folding.closedAll)}>
+    ${enabled && folding.closedAll ? 'Unfold all' : 'Fold all'}
+  <//>
+`;
+
+/* The two charts the page draws, a stacked bar of what a cost splits into and a line per run against
+   the gas each fixture used. */
+
+const THEME = {
+  surface: token('--surface'),
+  elevated: token('--elevated'),
+  foreground: token('--foreground'),
+  muted: token('--muted'),
+  faint: token('--faint'),
+  border: token('--border'),
+  primary: token('--primary'),
+};
+
+/* Slot order rather than 1..8, since adjacent kinds have to stay apart under colour-blind
+   simulation and the kinds start on a different hue from the guests, so the first segment of a bar
+   and the first line of a chart never share a colour. */
+const KIND_COLORS = [1, 6, 2, 7, 5, 3, 8, 4].map((step) => token('--cat-' + step));
+
+const at = (palette, index) => palette[index % palette.length];
+
+const FONT = "'Space Grotesk', system-ui, sans-serif";
+
+const TOTAL_SERIES = '__total__';
+
+const LABEL_MIN_FRACTION = 0.05;
+
+const ZOOM_THROTTLE = 60;
+
+function contrastText(hex) {
+  const channel = (offset) => {
+    const value = parseInt(hex.slice(offset, offset + 2), 16) / 255;
+    return value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4);
+  };
+  const luminance = 0.2126 * channel(1) + 0.7152 * channel(3) + 0.0722 * channel(5);
+  return luminance > 0.45 ? '#1a1a1a' : '#f5f5f5';
+}
+
+const hexAlpha = (hex, alpha) => hex + Math.round(alpha * 255).toString(16).padStart(2, '0');
+
+function niceMax(value) {
+  if (!(value > 0)) return 1;
+  const step = Math.pow(10, Math.floor(Math.log10(value))) / 2;
+  return Math.ceil(value / step) * step;
+}
+
+/* The binary counterpart, so a heap axis lands on round KiB, MiB or GiB rather than on the decimal
+   ceiling its labels would then print as arbitrary fractions. */
+function niceBytes(value) {
+  const unit = [1024 ** 3, 1024 ** 2, 1024, 1].find((step) => value >= step) ?? 1;
+  return niceMax(value / unit) * unit;
+}
+
+/* How a chart prints its values, where it rounds its axis up to, and how many marks it splits into
+   when the default split would not land on round labels. */
+const COST_SCALE = { format: si, ceiling: niceMax };
+const HEAP_SCALE = { format: bytes, ceiling: niceBytes, splits: 5 };
+
+const MARKER_STYLE =
+  'display:inline-block;margin-right:4px;border-radius:10px;width:10px;height:10px';
+
+/* The swatch echarts draws beside a tooltip row, redrawn here so a row is one escaped template. */
+const marker = (color) =>
+  '<span style="' + MARKER_STYLE + ';background-color:' + escaped(color) + '"></span>';
+
+/* Cells carry their own padding because the page stylesheet does not reach into a tooltip. */
+const TABLE_STYLE =
+  'border-collapse:collapse;margin-top:2px;line-height:1.35;font-variant-numeric:tabular-nums';
+const LABEL_CELL = 'padding:1px 0;white-space:nowrap';
+const FIGURE_CELL = 'text-align:right;padding:1px 0 1px 14px;white-space:nowrap';
+
+function tooltipTable(head, rows) {
+  const line = (row) =>
+    '<tr><td style="' +
+    LABEL_CELL +
+    '">' +
+    row[0] +
+    '</td>' +
+    row
+      .slice(1)
+      .map((value) => '<td style="' + FIGURE_CELL + '">' + escaped(value) + '</td>')
+      .join('') +
+    '</tr>';
+  return head + '<table style="' + TABLE_STYLE + '">' + rows.map(line).join('') + '</table>';
+}
+
+const AXIS = {
+  axisLine: { lineStyle: { color: THEME.border } },
+  axisTick: { show: false },
+  axisLabel: { color: THEME.muted, fontSize: 11 },
+  nameTextStyle: { color: THEME.faint, fontSize: 11 },
+  splitLine: { show: false },
+};
+
+const BASE_OPTION = {
+  animationDuration: 300,
+  animationEasing: 'cubicOut',
+  textStyle: { color: THEME.foreground, fontFamily: FONT },
+  legend: {
+    top: 0,
+    icon: 'circle',
+    itemWidth: 10,
+    itemHeight: 10,
+    textStyle: { color: THEME.muted },
+    // Both states drop the border the series carries, which would otherwise draw the enabled swatch
+    // one surface-coloured ring smaller than the disabled one.
+    itemStyle: { borderWidth: 0 },
+    inactiveColor: THEME.faint,
+    inactiveBorderColor: 'transparent',
+    inactiveBorderWidth: 0,
+  },
+  tooltip: {
+    // Drawn in the layer the shell clips to the viewport rather than in the chart, which a tall
+    // tooltip over a short panel would otherwise be cut by.
+    appendTo: '#chart-tooltip-layer',
+    confine: true,
+    backgroundColor: THEME.elevated,
+    borderColor: THEME.border,
+    borderWidth: 1,
+    borderRadius: 8,
+    padding: [8, 12],
+    textStyle: { color: THEME.foreground, fontSize: 12 },
+    axisPointer: { lineStyle: { color: THEME.faint, type: 'dashed' } },
+  },
+};
+
+/* The legend is canvas-drawn and its select event carries no modifier, so the click is read on its
+   way down instead. */
+let multiSelect = false;
+document.addEventListener(
+  'click',
+  (event) => {
+    multiSelect = event.metaKey || event.ctrlKey;
+  },
+  true
+);
+
+/*
+ * Grafana-style legend. A plain click isolates one series, a plain click on the lone remaining
+ * series resets to all, and a Cmd or Ctrl click keeps the default per-series toggle. The rule reads
+ * the selection the click started from, so it holds however the current state was reached.
+ */
+function isolate(chart, names, params, onChange) {
+  if (multiSelect) {
+    onChange(params.selected);
+    return;
+  }
+  const before = names.filter((name) =>
+    name === params.name ? !params.selected[name] : params.selected[name]
+  );
+  const reset = before.length === 1 && before[0] === params.name;
+  const selected = Object.fromEntries(
+    names.map((name) => [name, reset || name === params.name])
+  );
+  chart.setOption({ legend: { selected } });
+  onChange(selected);
+}
+
+/*
+ * A chart against the box it is drawn in, disposed with the page that mounted it. The box carries
+ * the height rather than the chart, so echarts measures what it will actually draw at, and the panel
+ * is measured again whenever it is resized, a tooltip left over from before the resize having kept
+ * the offset it was placed at.
+ */
+function useChart(setup) {
+  const host = useRef(null);
+  const chart = useRef(null);
+  useLayoutEffect(() => {
+    chart.current = echarts.init(host.current);
+    setup?.(chart.current);
+    const hide = () => chart.current.dispatchAction({ type: 'hideTip' });
+    const observer = new ResizeObserver(() => {
+      hide();
+      chart.current.resize();
+    });
+    observer.observe(host.current);
+    // A window that only changed height never resizes the box the observer watches, and a tooltip
+    // left from before the resize keeps the offset it was placed at.
+    addEventListener('resize', hide);
+    return () => {
+      removeEventListener('resize', hide);
+      observer.disconnect();
+      chart.current.dispose();
+    };
+  }, []);
+  return { host, chart };
+}
+
+/*
+ * The kinds a total splits into, stacked one bar per run. Values are drawn in the unit they arrive
+ * in, and every share and ratio the chart states is between two of them. A bar is labelled with the
+ * cost, or with the share of the bar each kind takes when the caller asks for `shares`, and a click
+ * swaps the two.
+ */
+function CompositionChart({ series, kinds, notes, shares }) {
+  const [showCost, setShowCost] = useState(!shares);
+  const [enabled, setEnabled] = useState(() => new Set(kinds));
+
+  const { host, chart } = useChart((mounted) => {
+    mounted.on('legendselectchanged', (params) =>
+      isolate(mounted, kinds, params, (selected) =>
+        setEnabled(new Set(kinds.filter((kind) => selected[kind])))
+      )
+    );
+    // Only fires on a bar, never on empty grid space.
+    mounted.on('click', () => setShowCost((held) => !held));
+  });
+
+  useEffect(() => {
+    const visibleTotal = (run) =>
+      kinds.reduce(
+        (sum, kind, index) => (enabled.has(kind) ? sum + run.components[index] : sum),
+        0
+      );
+    const visibleTotals = () => series.map(visibleTotal);
+    const visiblePeak = Math.max.apply(null, visibleTotals()) || 1;
+
+    const kindLabel = (point) => {
+      if (point.value / visiblePeak < LABEL_MIN_FRACTION) return '';
+      if (showCost) return si(point.value);
+      return Math.round((point.value / visibleTotal(series[point.dataIndex])) * 100) + '%';
+    };
+
+    /* Cost beside the ratio to the cheapest run, so dropping a kind shows the comparison without
+       it. A lone bar has nothing to be stated against and carries the cost alone. */
+    const totalLabel = (point) => {
+      const total = visibleTotal(series[point.dataIndex]);
+      if (series.length < 2) return si(total);
+      const best = Math.min.apply(null, visibleTotals());
+      return si(total) + ' / ' + (best > 0 ? ratio(total / best) : DASH);
+    };
+
+    chart.current.setOption({
+      ...BASE_OPTION,
+      animation: false,
+      // The whole option is set again whenever a kind is dropped, so what the legend holds is stated
+      // rather than left to whatever the last merge happened to leave behind.
+      legend: {
+        ...BASE_OPTION.legend,
+        data: kinds,
+        selected: Object.fromEntries(kinds.map((kind) => [kind, enabled.has(kind)])),
+      },
+      grid: { left: 8, right: 96, top: 34, bottom: 8, containLabel: true },
+      xAxis: {
+        ...AXIS,
+        type: 'value',
+        max: visiblePeak,
+        axisLabel: { ...AXIS.axisLabel, formatter: si },
+      },
+      yAxis: {
+        ...AXIS,
+        type: 'category',
+        inverse: true,
+        data: series.map((run) => run.label),
+        axisLabel: { ...AXIS.axisLabel, fontSize: 12 },
+      },
+      tooltip: {
+        ...BASE_OPTION.tooltip,
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params) => {
+          const run = series[params[0].dataIndex];
+          const total = visibleTotal(run);
+          const rows = params
+            .filter((point) => point.seriesName !== TOTAL_SERIES)
+            .map((point) => [
+              marker(point.color) + escaped(point.seriesName),
+              si(point.value),
+              ((point.value / total) * 100).toFixed(1) + '%',
+            ]);
+          return tooltipTable(escaped(run.label), rows);
+        },
+      },
+      series: kinds
+        .map((kind, index) => ({
+          name: kind,
+          type: 'bar',
+          stack: 'cost',
+          barWidth: 24,
+          // The surface-coloured border is the gap that keeps neighbours from reading as one fill.
+          itemStyle: {
+            color: at(KIND_COLORS, index),
+            borderColor: THEME.surface,
+            borderWidth: 1,
+          },
+          label: {
+            show: true,
+            fontSize: 11,
+            color: contrastText(at(KIND_COLORS, index)),
+            formatter: kindLabel,
+          },
+          data: series.map((run) => run.components[index]),
+        }))
+        // Zero-width spacer closing each stack, so the row total prints past the end of the bar.
+        // The axis ends at the longest bar, which leaves that row's label starting on the grid's own
+        // edge, so the spacer is drawn unclipped for it to reach the margin the grid reserves.
+        .concat([
+          {
+            name: TOTAL_SERIES,
+            type: 'bar',
+            stack: 'cost',
+            silent: true,
+            clip: false,
+            itemStyle: { color: 'transparent' },
+            label: {
+              show: true,
+              position: 'right',
+              fontSize: 11,
+              color: THEME.muted,
+              formatter: totalLabel,
+            },
+            data: series.map(() => 0),
+          },
+        ]),
+    });
+  }, [series, kinds, showCost, enabled]);
+
+  const items = kinds
+    .map((kind, index) => notes[index] && html`<li><code>${kind}</code>: ${notes[index]}</li>`)
+    .filter(Boolean);
+
+  return html`
+    <div class="chart" style=${'height:' + Math.max(180, series.length * 46 + 72) + 'px'} ref=${host}></div>
+    ${items.length > 0 && html`<ul class="note">${items}</ul>`}
+  `;
+}
+
+/* The name a fixture is ordered by, falling back to the block number a point carrying no name is
+   identified by in the tooltip anyway. */
+const fixtureName = (point) => String(point[3] ?? point[2]);
+
+/* One order shared by every series, taken over the union of their fixtures so a fixture keeps the
+   same place in each line and the lines stay comparable. */
+function positions(series) {
+  const names = Array.from(
+    new Set(series.flatMap((line) => line.points.map(fixtureName)))
+  ).sort((left, right) => left.localeCompare(right));
+  return new Map(names.map((name, index) => [name, index]));
+}
+
+/* A point is [x, value, block number, name, gas], where x is the gas or the fixture's place in the
+   name order. The name is what that order is taken on, and the block number and the gas are what
+   the tooltip reads whichever order is in force. */
+function orderedPoints(series, mode) {
+  const position = mode === 'gas' ? null : positions(series);
+  return series.map((line) =>
+    line.points
+      .map((point) => {
+        const name = fixtureName(point);
+        return [position ? position.get(name) : point[0], point[1], point[2], name, point[0]];
+      })
+      .sort((left, right) => left[0] - right[0])
+  );
+}
+
+/* A fixture pulled off the chain is identified by its block number and the gas it used, while a
+   synthetic one carries what it exercises in its own name, which the number and the gas say nothing
+   about, so the name alone heads the tooltip. */
+const fixtureHead = (point) =>
+  fromChain(point[3])
+    ? 'Block #' + escaped(point[2]) + ' - ' + escaped(si(point[4])) + ' gas'
+    : '<div style="max-width:420px;white-space:normal;word-break:break-all">' +
+      escaped(point[3]) +
+      '</div>';
+
+/* Fraction of the fixtures that have to sit at gas positions of their own for the gas order to be
+   the one a chart opens in. */
+const GAS_SPREAD = 0.5;
+
+/* The order a chart opens in, which is the one that puts its fixtures at positions of their own. A
+   mainnet corpus gives every block its own gas and reads along the gas axis, while a corpus of
+   synthetic tests bills nearly all of them the same gas, which stacks them on one position no zoom
+   can separate. */
+function opening(series) {
+  const spread = new Set(series.flatMap((line) => line.points.map((point) => point[0]))).size;
+  // Against the longest run rather than every point drawn, since the runs profile the same corpus
+  // and so land on the same gas positions as each other.
+  const fixtures = Math.max(...series.map((line) => line.points.length));
+  return spread > fixtures * GAS_SPREAD ? 'gas' : 'name';
+}
+
+/*
+ * Cost and peak heap are both one value per fixture against the gas that fixture used, so one chart
+ * draws either, differing only in what `scale` prints the value as. Fixtures are ordered by the gas
+ * they used or by their own name, and only the gas order puts a figure on the x axis, so the name
+ * order leaves it unlabelled.
+ */
+function LineChartPanel({ title, series, scale }) {
+  const [mode, setMode] = useState(() => opening(series));
+  const { host, chart } = useChart((mounted) =>
+    mounted.on('legendselectchanged', (params) =>
+      isolate(
+        mounted,
+        series.map((line) => line.label),
+        params,
+        // Nothing has to be recomputed when a run is hidden, the value axis being pinned already.
+        () => {}
+      )
+    )
+  );
+
+  /* Built once, since the chart holds a zoom window and a legend selection of its own that a second
+     whole option would drop. The order the reader picks after that is merged in below. */
+  useEffect(() => {
+    const points = series.flatMap((line) => line.points);
+    const ceiling = scale.ceiling(points.reduce((max, point) => Math.max(max, point[1]), 0));
+    const opened = orderedPoints(series, opening(series));
+    /*
+     * The value axis is pinned to the whole corpus and animation is off, so hiding a run or zooming
+     * never rescales or slides what is left. The gas axis stays unpinned because dataZoom drives it.
+     */
+    chart.current.setOption({
+      ...BASE_OPTION,
+      animation: false,
+      grid: { left: 24, right: 24, top: 32, bottom: 76, containLabel: true },
+      xAxis: {
+        ...AXIS,
+        type: 'value',
+        min: 'dataMin',
+        max: 'dataMax',
+        axisLabel: { ...AXIS.axisLabel, show: false, formatter: gasTick },
+      },
+      yAxis: {
+        ...AXIS,
+        type: 'value',
+        min: 0,
+        max: ceiling,
+        // Left to itself the axis splits a binary ceiling at decimal marks, which the byte formatter
+        // then prints as fractions. Splitting it evenly keeps the marks in the ceiling's own unit.
+        interval: scale.splits && ceiling / scale.splits,
+        axisLabel: { ...AXIS.axisLabel, formatter: scale.format },
+      },
+      // filterMode none keeps the points outside the window, so a line still draws across both
+      // edges.
+      dataZoom: [
+        {
+          type: 'inside',
+          filterMode: 'none',
+          minSpan: 1,
+          zoomOnMouseWheel: true,
+          moveOnMouseMove: false,
+          throttle: ZOOM_THROTTLE,
+        },
+        {
+          type: 'slider',
+          filterMode: 'none',
+          minSpan: 1,
+          throttle: ZOOM_THROTTLE,
+          height: 30,
+          bottom: 24,
+          borderColor: THEME.border,
+          backgroundColor: 'transparent',
+          fillerColor: hexAlpha(THEME.primary, 0.18),
+          handleStyle: { color: THEME.primary, borderColor: THEME.primary },
+          moveHandleStyle: { color: THEME.primary },
+          textStyle: { color: THEME.muted, fontSize: 10 },
+          dataBackground: {
+            lineStyle: { color: THEME.border, opacity: 0.5 },
+            areaStyle: { color: THEME.border, opacity: 0.08 },
+          },
+          selectedDataBackground: {
+            lineStyle: { color: THEME.primary, opacity: 0.6 },
+            areaStyle: { color: THEME.primary, opacity: 0.08 },
+          },
+        },
+      ],
+      tooltip: {
+        ...BASE_OPTION.tooltip,
+        trigger: 'axis',
+        formatter: (params) => {
+          const point = params[0].value;
+          // One row per run, for the fixture the head names. An axis trigger collects every point
+          // sharing the pointer's position, and a corpus that bills hundreds of its fixtures the
+          // same gas puts hundreds of them there, so the rows are taken by name rather than by
+          // position.
+          const drawn = params.filter((candidate) => candidate.value[3] === point[3]);
+          // Against the smallest run on this fixture rather than over the whole corpus, so the ratio
+          // reads as the comparison the fixture itself makes. A hidden run is not among the params,
+          // which leaves the ratio between the runs actually drawn, and a lone one nothing to be
+          // stated against.
+          const smallest = drawn.reduce(
+            (min, candidate) => Math.min(min, candidate.value[1]),
+            Infinity
+          );
+          const figure = (value) =>
+            drawn.length < 2
+              ? scale.format(value)
+              : scale.format(value) + ' / ' + ratio(value / smallest);
+          const rows = drawn.map((candidate) => [
+            marker(candidate.color) + escaped(candidate.seriesName),
+            figure(candidate.value[1]),
+          ]);
+          return tooltipTable(fixtureHead(point), rows);
+        },
+      },
+      // A point per fixture, so markers stay hidden until the axis pointer picks one out.
+      series: series.map((line, index) => ({
+        name: line.label,
+        type: 'line',
+        symbol: 'circle',
+        symbolSize: 8,
+        showSymbol: false,
+        // Two runs of one stateless validator carry that validator's colour, so the dash pattern is
+        // what tells them apart.
+        lineStyle: { width: 2, color: line.color, type: line.dashed ? 'dashed' : 'solid' },
+        itemStyle: { color: line.color, borderColor: THEME.surface, borderWidth: 2 },
+        data: opened[index],
+      })),
+    });
+  }, [series, scale]);
+
+  /* Merged into the chart the order was drawn from, so neither the zoom window nor a hidden run is
+     lost to a reordering. Only the gas order puts a figure on the x axis. */
+  useEffect(() => {
+    chart.current.setOption({
+      xAxis: { axisLabel: { show: mode === 'gas' } },
+      series: orderedPoints(series, mode).map((data) => ({ data })),
+    });
+  }, [series, mode]);
+
+  return html`
+    <${Card}
+      title=${title}
+      control=${html`<${Pill} onClick=${() => setMode(mode === 'gas' ? 'name' : 'gas')}>
+        Sorted by ${mode}
+      <//>`}>
+      <div class="chart" style="height:420px" ref=${host}></div>
+    <//>
+  `;
+}
+
+/* The panels a set of runs is drawn as and the columns a run is listed by, shared by every page that
+   shows one. */
+
+/* What each column of prose is cut to, the version to the seven digits of a short commit hash and
+   the other two to what leaves the columns beside them room. */
+const SHORT_COMMIT = 68;
+
+/* Stated where the ratio is, since a reader who takes the relative for a proving time prediction is
+   reading more into it than the measurement carries. */
+const RELATIVE_NOTE =
+  'Empirically cost gaps overstate proving time gaps, so take the cost relative as a reference' +
+  ' rather than a proving time prediction.';
+
+/* A magnitude beside its ratio to the smallest of the runs shown, which is one cell because neither
+   figure reads as a comparison without the other. A list that states no baseline shows the
+   magnitude alone. */
+const figure = (value, smallest, format) =>
+  smallest == null ? format(value) : format(value) + ' / ' + ratio(value / smallest);
+
+/* What a run profiled out of what its corpus holds, since a guest that failed on some blocks is
+   otherwise indistinguishable from one that covered the corpus, coloured by which of the two it is
+   so a short run is seen rather than read for. A corpus of unstated size leaves the count alone. */
+const BlocksCovered = ({ covered, size }) =>
+  size == null
+    ? String(covered)
+    : html`<span class=${covered === size ? 'complete' : 'partial'}>${covered} / ${size}</span>`;
+
+/*
+ * Every column a run is listed in, keyed on the run's index entry and reading its figures out of
+ * `figures` when they are in. A page takes the ones it does not already state elsewhere.
+ *
+ * `baseline` holds the smallest mean cost and the smallest mean peak heap among the runs shown,
+ * which turns the two figure columns into comparisons. A list of runs that are not comparable states
+ * no baseline and prints the magnitudes alone. `suiteBlocks` gives a run's corpus its size, which is
+ * what the blocks a run profiled are stated out of.
+ */
+function runColumns(figures, { baseline, suiteBlocks } = {}) {
+  const of = (key) => (entry) => figures.get(entry.runId)?.[key] ?? null;
+  return {
+    guest: column(
+      'guest',
+      'Stateless validator',
+      (entry) => entry.stateless_validator,
+      (entry) => html`<${Link} href=${'runs/' + entry.runId}>${entry.stateless_validator}<//>`
+    ),
+    // A short commit is the whole of one version and the start of every other, so the column is held
+    // to that and the rest is read off the hover.
+    version: column(
+      'version',
+      'Version',
+      (entry) => entry.stateless_validator_version,
+      (entry) => html`<${Truncate} text=${entry.stateless_validator_version} width=${SHORT_COMMIT} />`
+    ),
+    zkvm: column('zkvm', 'zkVM', (entry) => entry.zkvm),
+    zkvmVersion: column('zkvmVersion', 'zkVM version', (entry) => entry.zkvm_version),
+    suite: column(
+      'suite',
+      'Suite',
+      (entry) => entry.suite,
+      (entry) => html`<${SuiteLink} suite=${entry.suite} />`
+    ),
+    profiled: column(
+      'profiled',
+      'Profiled',
+      (entry) => entry.generated_at,
+      (entry) => stamp(entry.generated_at)
+    ),
+    blocks: figureColumn(
+      'blocks',
+      'Blocks',
+      of('fixtures'),
+      (covered, entry) =>
+        html`<${BlocksCovered} covered=${covered} size=${suiteBlocks?.(entry)} />`
+    ),
+    meanCost: figureColumn('meanCost', 'Mean cost', of('meanCost'), (value) =>
+      figure(value, baseline?.cost, si)
+    ),
+    peakHeapMean: figureColumn('peakHeapMean', 'Mean peak heap', of('peakHeapMean'), (value) =>
+      figure(value, baseline?.heap, bytes)
+    ),
+    sha256: column(
+      'sha256',
+      'ELF SHA256',
+      (entry) => entry.elf_sha256 ?? null,
+      (entry) => shortSha256(entry.elf_sha256)
+    ),
+    // Drawn rather than lettered, so it carries nothing to sort on.
+    elf: {
+      key: 'elf',
+      header: 'ELF',
+      render: (entry) =>
+        html`<${ElfLink} url=${entry.elf_url} label=${entry.stateless_validator} />`,
+    },
+  };
+}
+
+/* What a run list can be broken up by, in the order a heading names them however they were turned
+   on, so the groups read the same whichever chip was pressed first. Each names the column it stands
+   for, which a list every run of which shares that value drops along with the grouping. */
+const RUN_GROUPS = [
+  { label: 'Stateless validator', column: 'guest', of: (entry) => entry.stateless_validator },
+  { label: 'zkVM', column: 'zkvm', of: (entry) => entry.zkvm },
+  { label: 'Suite', column: 'suite', of: (entry) => entry.suite },
+];
+
+/* What a comparison is fixed to, so a list broken up by all of them puts a comparison's worth of
+   runs under one heading and nothing else does. */
+const COMPARISON_GROUPS = ['zkVM', 'Suite'];
+
+/*
+ * The runs listing, which is the whole of the run list and again a panel of a suite. `fixed` names
+ * what every run listed already shares, which is dropped from the columns and from what the list can
+ * be broken up by. `figures` is read as the table draws, so a caller that fills it in as the profiles
+ * land redraws the panel rather than waiting on them.
+ */
+function RunsPanel({ entries, figures, suiteBlocks, fixed = NOTHING }) {
+  const groups = RUN_GROUPS.filter((group) => !fixed.includes(group.label));
+  const [grouping, setGrouping] = useState(
+    () => new Set(COMPARISON_GROUPS.filter((label) => !fixed.includes(label)))
+  );
+  /* The list opens on what each guest costs today, its history being what a reader asks for rather
+     than what they land on. */
+  const [latestOnly, setLatestOnly] = useState(true);
+  /* Nothing until the reader opens a selection, which is also what puts the column in. */
+  const [selected, setSelected] = useState(null);
+
+  /* The zkVM and the corpus are what a reader picks a run list down to, and neither is offered
+     where the list already stands for one of them. */
+  const dimensions = useMemo(
+    () =>
+      [
+        {
+          kind: CHOICE,
+          key: 'zkvm',
+          label: 'zkVM',
+          of: (entry) => entry.zkvm,
+          // One shortcut per zkVM published, which is the cut a reader reaches for first and the
+          // one the list is otherwise broken up by.
+          presets: (domain) => domain,
+        },
+        { kind: CHOICE, key: 'suite', label: 'Suite', of: (entry) => entry.suite },
+      ].filter((dimension) => !fixed.includes(dimension.label)),
+    [fixed]
+  );
+  const narrowing = useFilters(dimensions, entries);
+
+  const recent = useMemo(
+    () => (latestOnly ? recentRuns(entries) : entries),
+    [entries, latestOnly]
+  );
+  const listed = useMemo(
+    () => (narrowing.narrowing ? recent.filter(narrowing.keep) : recent),
+    [recent, narrowing.answers]
+  );
+
+  /* A run the listing no longer holds cannot be unpicked, so a narrowing takes it out of the
+     selection and leaves every run still listed picked. */
+  useEffect(() => {
+    setSelected((held) => {
+      if (!held?.size) return held;
+      const shown = new Set(listed.map((entry) => entry.runId));
+      const kept = [...held].filter((id) => shown.has(id));
+      return kept.length === held.size ? held : new Set(kept);
+    });
+  }, [listed]);
+  const byRunId = useMemo(
+    () => new Map(entries.map((entry) => [entry.runId, entry])),
+    [entries]
+  );
+
+  const shown = useMemo(() => {
+    const columns = runColumns(figures, { suiteBlocks });
+    const dropped = RUN_GROUPS.filter((group) => fixed.includes(group.label)).map(
+      (group) => group.column
+    );
+    return [
+      columns.guest,
+      columns.version,
+      columns.zkvm,
+      columns.zkvmVersion,
+      columns.suite,
+      columns.profiled,
+      columns.blocks,
+      columns.meanCost,
+      columns.peakHeapMean,
+      columns.sha256,
+      columns.elf,
+    ].filter((column) => !dropped.includes(column.key));
+  }, [figures, suiteBlocks, fixed]);
+
+  const grouped = groups.some((group) => grouping.has(group.label));
+  const groupKey = (entry) =>
+    groups
+      .filter((group) => grouping.has(group.label))
+      .map((group) => group.of(entry))
+      .join(' / ') || null;
+  const folding = useFolding(listed, groupKey, grouping);
+
+  /* The runs a selection may be extended by are fixed by the first one in it, so the constraint
+     appears when the selection opens and lifts when it empties. */
+  const anchor = selected?.size ? byRunId.get([...selected][0]) : null;
+
+  /* The runs of a group that can actually be drawn together, which is the newest of them and every
+     run comparable with it, one per guest. A group of one has nothing to compare. */
+  const groupComparison = (rows) => {
+    const newest = rows.reduce((held, entry) =>
+      entry.generated_at > held.generated_at ? entry : held
+    );
+    const drawable = recentRuns(rows.filter((entry) => comparable(newest, entry)));
+    return drawable.length > 1 ? drawable : null;
+  };
+
+  /* A group holding runs a comparison may take whole offers one. Any other grouping puts runs of
+     two zkVMs or two corpora under one heading, which is not a comparison and carries no
+     shortcut. */
+  const groupControl = (rows) => {
+    const whole = COMPARISON_GROUPS.every(
+      (label) => fixed.includes(label) || grouping.has(label)
+    );
+    if (!whole) return null;
+    const drawable = groupComparison(rows);
+    if (!drawable) return null;
+    return html`<${Link} href=${compareUrl(drawable.map((entry) => entry.runId))}>Compare<//>`;
+  };
+
+  /* Leaving the selection empties it, so the constraint the rows are disabled under never outlives
+     the selection that set it. */
+  const controls = html`
+    <div class="chips">
+      <${FoldPill} folding=${folding} enabled=${grouped} />
+      ${selected
+        ? html`
+            <${Pill} onClick=${() => setSelected(null)}>Cancel<//>
+            <${Pill}
+              disabled=${selected.size < 2}
+              onClick=${() => navigate(compareUrl([...selected]))}>
+              Compare
+            <//>
+          `
+        : html`<${Pill} onClick=${() => setSelected(EMPTY_SET)}>Select<//>`}
+    </div>
+  `;
+
+  return html`
+    <${Card} title="Runs" control=${controls}>
+      <!-- Breaking the list up and narrowing it are different questions, and a reader cannot tell
+           which a chip answers from its label alone, so each set stands behind its own. -->
+      <div class="chip-sets">
+        <${GroupChips}
+          groups=${groups}
+          grouping=${grouping}
+          onToggle=${(label) => setGrouping((held) => toggled(held, label))} />
+        <${Filters} filters=${narrowing} kept=${listed.length} total=${recent.length}>
+          <${Chip} pressed=${latestOnly} onClick=${() => setLatestOnly((held) => !held)}>
+            Latest
+          <//>
+        <//>
+      </div>
+      <${DataTable}
+        columns=${shown}
+        rows=${listed}
+        rowKey=${(entry) => entry.runId}
+        initialSort=${{ key: 'profiled', direction: 'descending' }}
+        groupBy=${groupKey}
+        groupControl=${groupControl}
+        foldable=${grouped}
+        folded=${folding.folded}
+        onFold=${folding.fold}
+        height=${null}
+        selection=${selected &&
+        {
+          selected,
+          enabled: (entry) => anchor == null || comparable(anchor, entry),
+          onChange: (id, checked) =>
+            setSelected((held) => {
+              const next = new Set(held);
+              if (checked) next.add(id);
+              else next.delete(id);
+              return next;
+            }),
+        }}
+        empty="No run profiled yet." />
+    <//>
+  `;
+}
+
+/* Directory segments every block shares tell one from another nothing, so a grouping starts where
+   the names first differ. */
+function commonDepth(paths) {
+  const [first = [], ...rest] = paths.map((path) => path.split('/'));
+  let depth = 0;
+  while (depth < first.length - 1 && rest.every((segments) => segments[depth] === first[depth])) {
+    depth += 1;
+  }
+  return depth;
+}
+
+/* The test a case belongs to, which is the name past the path and before the parameters it was
+   filled with. */
+const testName = (name) => (name.split('::')[1] ?? '').split('[')[0];
+
+/* The parameters a case was filled with, as the tokens they are written as. */
+const caseTokens = (name) => {
+  const open = name.indexOf('[');
+  if (open < 0) return [];
+  return name.slice(open + 1, name.lastIndexOf(']')).split('-');
+};
+
+/* The tokens every case in the corpus carries. Those name the corpus rather than the case, so what
+   is left once they are taken off is what tells one row from another. Held by value rather than by
+   position, since a case that takes an extra parameter carries the same tokens further along. */
+function sharedTokens(cases) {
+  const [first = [], ...rest] = cases;
+  const shared = new Set(first);
+  for (const tokens of rest) {
+    const carried = new Set(tokens);
+    for (const token of shared) {
+      if (!carried.has(token)) shared.delete(token);
+    }
+  }
+  return shared;
+}
+
+/* What a synthetic corpus's blocks may be broken up by, which is the test a case belongs to under
+   where its file sits, once the segments every block shares are taken off. A corpus taken off the
+   chain is one flat run of blocks and offers nothing to break it up by. */
+function blockGroups(names) {
+  const path = (name) => name.split('::')[0];
+  const synthetic = names.filter((name) => !fromChain(name));
+  if (!synthetic.length) return [];
+  const depth = commonDepth(synthetic.map(path));
+  return [
+    {
+      label: 'Test',
+      of: (name) =>
+        [...path(name).split('/').slice(depth), testName(name)].filter(Boolean).join(' / '),
+    },
+  ];
+}
+
+/*
+ * How a corpus names its rows. A block pulled off the chain is named after the tool that pulled it
+ * and a hash, so the block it holds is what names it. A synthetic one carries the path, the test and
+ * the parameters it was filled with, of which the segments every block shares and the parameters
+ * every case carries tell one row from another nothing, so neither is stated. What is left is the
+ * parameters that are the case's own, under a heading that gives the rest, or that same heading
+ * ahead of them where there is none. The whole of the name is on the clipboard from the button
+ * beside it either way.
+ */
+function blockLabels(names) {
+  const cases = names
+    .filter((name) => !fromChain(name))
+    .map(caseTokens)
+    .filter((tokens) => tokens.length);
+  const shared = sharedTokens(cases);
+  return (name, block, heading) => {
+    if (fromChain(name)) return 'Block #' + block.block_number;
+    const own = caseTokens(name).filter((token) => !shared.has(token));
+    const label = own.length ? own.join('-') : testName(name) || name;
+    return heading ? heading(name) + ' / ' + label : label;
+  };
+}
+
+/* Long enough after a keystroke that a corpus of a thousand rows is rebuilt once the reader has
+   stopped typing rather than once per letter. The input is left uncontrolled, so typing redraws
+   nothing until it settles. */
+const SEARCH_DEBOUNCE = 200;
+
+/* A listing of blocks opens in the order its corpus numbers or names them, which is the order a
+   reader looks a block up in. Any other order is one column click away. */
+const BLOCK_ORDER = { key: 'name', direction: 'ascending' };
+
+/*
+ * Every block a run or a corpus holds, one row each, filterable by name and broken up by the layers
+ * a synthetic corpus's test names carry, which the panel folds and unfolds whole. `columns` are what
+ * the caller measures a block by, which a corpus listed on its own has none of. The panel takes a
+ * `title`, since a run lists the blocks it got through and the ones it did not the same way, and a
+ * `control` the caller states its own choice with, which stands beside the panel's own.
+ */
+function BlocksPanel({
+  names,
+  metadata,
+  columns = NOTHING,
+  filters = NOTHING,
+  title = 'Blocks',
+  control,
+}) {
+  const [filter, setFilter] = useState('');
+  const settling = useRef(0);
+  const narrowing = useFilters(filters, names);
+
+  const layers = useMemo(() => blockGroups(names), [names]);
+  const blockLabel = useMemo(() => blockLabels(names), [names]);
+  /* A listing opens broken up by what its corpus offers, the path being what tells one family of
+     tests from another, and turning that off is what lists the blocks flat under their whole
+     names. */
+  const [grouping, setGrouping] = useState(() => new Set(layers.map((layer) => layer.label)));
+
+  /* The heading a row stands under, and what the row is left to carry. A listing broken up by
+     nothing draws no heading, so each row states the one it would have stood under itself. */
+  const [groupKey, grouped, heading] = useMemo(() => {
+    const [layer] = layers.filter((candidate) => grouping.has(candidate.label));
+    const key = (name) => (layer && !fromChain(name) ? layer.of(name) : null);
+    return [key, layer != null, layer ? null : (layers[0]?.of ?? null)];
+  }, [layers, grouping]);
+
+  const rows = useMemo(() => {
+    if (!filter && !narrowing.narrowing) return names;
+    const needle = filter.toLowerCase();
+    return names.filter((name) => {
+      const named =
+        !needle ||
+        (name + ' ' + blockLabel(name, metadata(name), heading)).toLowerCase().includes(needle);
+      return named && narrowing.keep(name);
+    });
+  }, [names, filter, heading, narrowing.answers]);
+
+  const folding = useFolding(rows, groupKey, grouping);
+
+  const panelControls = html`
+    <div class="chips">
+      <!-- A corpus taken off the chain is one flat run of blocks, so it is offered neither the
+           layers to break it up by nor the fold that only a heading has to give. -->
+      ${layers.length > 0 && html`<${FoldPill} folding=${folding} enabled=${grouped} />`}
+      ${control}
+      <input
+        type="search"
+        class="search"
+        placeholder="Filter blocks"
+        aria-label="Filter blocks by name"
+        onInput=${(event) => {
+          const typed = event.currentTarget.value.trim();
+          clearTimeout(settling.current);
+          settling.current = setTimeout(() => {
+            setFilter(typed);
+            // Nothing the control closed is held back from a reader who is searching, so a filter
+            // opens it again and the control goes back to offering the fold.
+            if (typed && folding.closedAll) folding.closeAll(false);
+          }, SEARCH_DEBOUNCE);
+        }} />
+    </div>
+  `;
+
+  return html`
+    <${Card} title=${title} control=${panelControls}>
+      ${(layers.length > 0 || narrowing.offered.length > 0) &&
+      html`<div class="chip-sets">
+        ${layers.length > 0 &&
+        html`<${GroupChips}
+          groups=${layers}
+          grouping=${grouping}
+          onToggle=${(label) => setGrouping((held) => toggled(held, label))} />`}
+        ${narrowing.offered.length > 0 &&
+        html`<${Filters} filters=${narrowing} kept=${rows.length} total=${names.length} />`}
+      </div>`}
+      <${DataTable}
+        columns=${[
+          {
+            key: 'name',
+            header: 'Block',
+            // Takes what the other columns leave, so a name is shown whole wherever there is room
+            // for it. A caller that claims the slack too shares it with the name rather than
+            // leaving the rows it lists unidentifiable.
+            fill: true,
+            // Only a row stating the whole name can outrun the column, so only it is offered the
+            // overlay. A block off the chain is read by its number and one standing under a heading
+            // carries the case alone, and neither is longer than the room it has.
+            render: (name) => html`
+              <div class="block-name">
+                <${Truncate}
+                  text=${blockLabel(name, metadata(name), heading)}
+                  overlay=${!grouped && !fromChain(name)} />
+                <${CopyButton} text=${name} label=${'Copy the full name of ' + name} />
+              </div>
+            `,
+            sortValue: (name) => (fromChain(name) ? metadata(name).block_number : name),
+          },
+          figureColumn('gas', 'Gas', (name) => metadata(name).gas_used, si),
+          ...columns,
+        ]}
+        rows=${rows}
+        rowKey=${(name) => name}
+        initialSort=${BLOCK_ORDER}
+        groupBy=${groupKey}
+        foldable=${grouped}
+        folded=${folding.folded}
+        onFold=${folding.fold}
+        height=${narrowing.offered.length > 0 ? 'fixed' : 'capped'}
+        empty=${() =>
+          filter
+            ? 'No block named like ' + filter + '.'
+            : narrowing.narrowing
+              ? 'No block within the bounds set.'
+              : 'No block here.'} />
+    <//>
+  `;
+}
+
+/* Stateless validator then version, which fixes the order of the overview rows, the composition bars
+   and the chart legends alike. */
+const byGuest = (left, right) =>
+  left.stateless_validator.localeCompare(right.stateless_validator) ||
+  left.stateless_validator_version.localeCompare(right.stateless_validator_version);
+
+/*
+ * The charts a set of runs is drawn as, which is what a comparison and a single run both show below
+ * their own heading. `shares` opens the composition as the share each kind takes of the total, which
+ * is what a lone run has to say since it has no other run to be measured against.
+ */
+function CostPanels({ rows, fixtures, shares }) {
+  const kinds = useMemo(() => rows[0].entry.composition.map((kind) => kind.name), [rows]);
+  const notes = useMemo(() => rows[0].entry.composition.map((kind) => kind.note), [rows]);
+  const colors = guestColors(rows.map((row) => row.entry.stateless_validator));
+
+  /* A version tells two runs of one stateless validator apart, so it is stated only where one name
+     stands for more than one run. */
+  const label = (entry) =>
+    rows.filter((row) => row.entry.stateless_validator === entry.stateless_validator).length > 1
+      ? entry.stateless_validator + ' ' + entry.stateless_validator_version
+      : entry.stateless_validator;
+
+  /* Runs of one stateless validator carry that validator's colour, so all but the first of the ones
+     a chart actually draws are told apart by their dash pattern. */
+  const series = (points) => {
+    const drawn = rows
+      .map((row) => ({ row, points: points(row) }))
+      .filter((candidate) => candidate.points.length);
+    return drawn.map((candidate, index) => ({
+      label: label(candidate.row.entry),
+      color: colors[candidate.row.entry.stateless_validator],
+      dashed:
+        drawn.findIndex(
+          (other) => other.row.entry.stateless_validator === candidate.row.entry.stateless_validator
+        ) !== index,
+      points: candidate.points,
+    }));
+  };
+
+  const cost = useMemo(() => series((row) => row.statistics.points), [rows]);
+  const heap = useMemo(() => series((row) => row.statistics.heapPoints), [rows]);
+  const bars = useMemo(
+    () =>
+      rows.map((row) => ({
+        label: label(row.entry),
+        // Drawn per fixture, so a bar totals to the cost stated beside it.
+        components: row.statistics.components.map((value) => value / fixtures.length),
+      })),
+    [rows, fixtures]
+  );
+
+  /* A zkVM that prices an execution as one number leaves the total nothing to be split into, and the
+     page drops the composition panel along with it. */
+  return html`
+    ${kinds.length > 0 &&
+    html`<${Card} title="Cost composition">
+      <${CompositionChart}
+        series=${bars}
+        kinds=${kinds}
+        notes=${notes}
+        shares=${shares} />
+    <//>`}
+    ${cost.length > 0 &&
+    html`<${LineChartPanel}
+      title="Cost against gas usage"
+      series=${cost}
+      scale=${COST_SCALE} />`}
+    ${heap.length > 0 &&
+    html`<${LineChartPanel}
+      title="Peak heap against gas usage"
+      series=${heap}
+      scale=${HEAP_SCALE} />`}
+  `;
+}
+
+/* The five pages. Each loads what it draws from and renders nothing until it is in, since a page
+   whose numbers have not landed has nothing to say. */
+
+function useAsync(load, deps) {
+  const [state, setState] = useState({});
+  useEffect(() => {
+    let live = true;
+    setState({});
+    Promise.resolve()
+      .then(load)
+      .then(
+        (value) => live && setState({ value }),
+        (error) => live && setState({ error })
+      );
+    return () => {
+      live = false;
+    };
+  }, deps);
+  return state;
+}
+
+/*
+ * The statistics of every run given, filled in once the profiles have landed, so a listing draws at
+ * once rather than waiting on a file per run. A run whose profile is not published keeps its figures
+ * empty rather than emptying every other run's alongside it.
+ */
+function useFigures(entries) {
+  const [figures, setFigures] = useState(() => new Map());
+  useEffect(() => {
+    let live = true;
+    Promise.allSettled(entries.map((entry) => loadRun(entry))).then((results) => {
+      if (!live) return;
+      const held = new Map();
+      results.forEach((result, index) => {
+        if (result.status !== 'fulfilled') return;
+        held.set(entries[index].runId, ownStatistics(result.value));
+      });
+      setFigures(held);
+    });
+    return () => {
+      live = false;
+    };
+  }, [entries]);
+  return figures;
+}
+
+const RunsView = ({ entries, suiteBlocks }) => {
+  const figures = useFigures(entries);
+  return html`<${RunsPanel} entries=${entries} figures=${figures} suiteBlocks=${suiteBlocks} />`;
+};
+
+function RunsPage() {
+  const state = useAsync(() => Promise.all([loadIndex(), loadSuiteBlocks()]), []);
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  const [{ runs }, suiteBlocks] = state.value;
+  return html`<${RunsView} entries=${runs} suiteBlocks=${suiteBlocks} />`;
+}
+
+function RunView({ entry, run, fixtures, figures, size }) {
+  /* A block is read for what it spent its cost on rather than for the magnitudes, which is what the
+     total beside them already carries, so the kinds open as shares of it. */
+  const [shares, setShares] = useState(true);
+  const cost = (name) => run.profile[name].cost;
+  const metadata = (name) => run.profile[name].metadata;
+  /* What the run is short of its corpus by, listed the same way and only where there is something
+     to list. A profile written before failures were recorded carries none. */
+  const failed = Object.keys(run.failures ?? {});
+
+  /* Every figure the listing states, offered as a bound on it. A kind is offered twice, once in the
+     unit it was profiled in and once as the share it takes of the total, since a block is asked for
+     both what a kind cost and what it dominated. */
+  const drawn = useMemo(() => [{ entry, statistics: figures }], [entry, figures]);
+
+  const dimensions = useMemo(
+    () => [
+      { kind: RANGE, key: 'gas', label: 'Gas', of: (name) => metadata(name).gas_used, print: si },
+      {
+        kind: RANGE,
+        key: 'total',
+        label: 'Cost',
+        of: (name) => cost(name).total,
+        print: si,
+        presets: () => [95, 99],
+      },
+      ...entry.composition.flatMap((kind) => [
+        {
+          kind: RANGE,
+          key: 'kind:' + kind.name,
+          label: kind.name,
+          of: (name) => cost(name)[kind.name],
+          print: si,
+        },
+        {
+          kind: RANGE,
+          key: 'share:' + kind.name,
+          label: kind.name + ' share',
+          of: (name) => cost(name)[kind.name] / cost(name).total,
+          print: percent,
+        },
+      ]),
+      {
+        kind: RANGE,
+        key: 'heap',
+        label: 'Peak heap',
+        of: (name) => run.profile[name].peak_heap_bytes ?? null,
+        print: bytes,
+        presets: () => [95, 99],
+      },
+    ],
+    [run, entry]
+  );
+
+  return html`
+    <!-- What was profiled over what it was profiled on, which is the guest and its build against the
+         measurement taken of it. -->
+    <${Card} title="Run">
+      <${FieldStrip}>
+        <${Field} label="Stateless validator">${entry.stateless_validator}<//>
+        <${Field} label="Version">
+          <${Truncate} text=${entry.stateless_validator_version} />
+        <//>
+        <${Field} label="zkVM">${entry.zkvm}<//>
+        <${Field} label="zkVM version">${entry.zkvm_version}<//>
+        <${Field} label="ELF SHA256">
+          <${Truncate} text=${shortSha256(entry.elf_sha256) || DASH} />
+        <//>
+        <${Field} label="ELF">
+          <${ElfLink}
+            url=${entry.elf_url}
+            label=${entry.stateless_validator}
+            fallback=${DASH} />
+        <//>
+      <//>
+      <${FieldStrip}>
+        <${Field} label="Profiled">${stamp(entry.generated_at)}<//>
+        <${Field} label="Suite">
+          <${SuiteLink} suite=${entry.suite} />
+        <//>
+        <${Field} label="Blocks">
+          <${BlocksCovered} covered=${figures.fixtures} size=${size} />
+        <//>
+        <${Field} label="Mean cost">${si(figures.meanCost)}<//>
+        <${Field} label="Mean peak heap">
+          ${figures.peakHeapMean == null ? DASH : bytes(figures.peakHeapMean)}
+        <//>
+      <//>
+    <//>
+    <!-- A lone run has nothing to be measured against, so what its cost splits into is all its
+         composition has to say. -->
+    <${CostPanels} rows=${drawn} fixtures=${fixtures} shares />
+    <${BlocksPanel}
+      names=${fixtures}
+      metadata=${metadata}
+      filters=${dimensions}
+      control=${html`<${Pill} onClick=${() => setShares((held) => !held)}>
+        ${shares ? 'Show cost' : 'Show percentage'}
+      <//>`}
+      columns=${[
+        figureColumn('total', 'Cost', (name) => cost(name).total, si),
+        // Keyed apart from the fixed columns, since a zkVM is free to call one of its kinds `total`.
+        ...entry.composition.map((kind) =>
+          figureColumn(
+            'kind:' + kind.name,
+            kind.name,
+            (name) =>
+              shares ? cost(name)[kind.name] / cost(name).total : cost(name)[kind.name],
+            shares ? percent : si
+          )
+        ),
+        figureColumn(
+          'heap',
+          'Peak heap',
+          (name) => run.profile[name].peak_heap_bytes ?? null,
+          bytes
+        ),
+      ]} />
+    ${failed.length > 0 &&
+    html`<${BlocksPanel}
+      title="Failures"
+      names=${failed}
+      metadata=${(name) => run.failures[name].metadata}
+      columns=${[
+        // Sized to what it holds, as every column but the one holding the names is, and read on one
+        // line, since what a backend reported is the whole of why the block is listed here.
+        column('reason', 'Reason', (name) => run.failures[name].reason),
+      ]} />`}
+  `;
+}
+
+function RunPage({ id }) {
+  const state = useAsync(async () => {
+    const [{ byRunId }, suiteBlocks] = await Promise.all([loadIndex(), loadSuiteBlocks()]);
+    const entry = byRunId.get(id);
+    if (!entry) throw new Error('No run ' + id);
+    const run = await loadRun(entry);
+    const fixtures = sharedFixtures([run]);
+    return { entry, run, fixtures, figures: statistics(run, fixtures), size: suiteBlocks(entry) };
+  }, [id]);
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  return html`<${RunView} ...${state.value} />`;
+}
+
+function ComparePage({ ids }) {
+  const state = useAsync(async () => {
+    const { byRunId } = await loadIndex();
+    const missing = ids.find((id) => !byRunId.has(id));
+    if (missing) throw new Error('No run ' + missing);
+    const entries = ids.map((id) => byRunId.get(id));
+    /* Costs from two zkVMs are in different units, costs from two SDK versions come from different
+       circuits and two corpora share no block, so a request naming any of those is refused rather
+       than drawn on one axis. */
+    const mixed = entries.find((entry) => !comparable(entries[0], entry));
+    if (mixed) {
+      throw new Error('Run ' + mixed.runId + ' is not comparable with ' + entries[0].runId);
+    }
+    const runs = await Promise.all(entries.map((entry) => loadRun(entry)));
+    return { entries, runs, fixtures: sharedFixtures(runs) };
+  }, [ids.join(',')]);
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  const { entries, runs, fixtures } = state.value;
+
+  /* The overview table and the charts, over the fixtures every run in the comparison profiled, so a
+     set spanning corpora can leave none at all and there is nothing to draw. */
+  const drawn = () => {
+    if (!fixtures.length) {
+      return html`<${Card} title="Overview">
+        <p class="empty">These runs share no profiled fixture.</p>
+      <//>`;
+    }
+    // entries and runs are parallel, an index entry beside the profile it names.
+    const rows = entries
+      .map((entry, index) => ({ entry, statistics: statistics(runs[index], fixtures) }))
+      .sort((left, right) => byGuest(left.entry, right.entry));
+    const heaps = rows.map((row) => row.statistics.peakHeapMean).filter((peak) => peak != null);
+    /* A lone run has nothing to be stated against, and a ratio of one against itself says less than
+       the magnitude alone. */
+    const baseline =
+      rows.length < 2
+        ? null
+        : {
+            cost: Math.min(...rows.map((row) => row.statistics.meanCost)),
+            heap: heaps.length ? Math.min(...heaps) : null,
+          };
+    const columns = runColumns(new Map(rows.map((row) => [row.entry.runId, row.statistics])), {
+      baseline,
+    });
+    return html`
+      <${Card} title="Overview">
+        <p>${RELATIVE_NOTE}</p>
+        <${DataTable}
+          columns=${[
+            columns.guest,
+            columns.version,
+            columns.meanCost,
+            columns.peakHeapMean,
+            columns.sha256,
+            columns.elf,
+          ]}
+          rows=${rows.map((row) => row.entry)}
+          rowKey=${(entry) => entry.runId} />
+      <//>
+      <${CostPanels} rows=${rows} fixtures=${fixtures} />
+    `;
+  };
+
+  return html`
+    <!-- What every run in the comparison holds in common, which is what makes it one, and the span
+         the panels below are over. -->
+    <${Card} title="Configurations">
+      <${FieldStrip}>
+        <${Field} label="zkVM">${entries[0].zkvm}<//>
+        <${Field} label="zkVM version">${entries[0].zkvm_version}<//>
+        <${Field} label="Suite">
+          <${SuiteLink} suite=${entries[0].suite} />
+        <//>
+        <${Field} label="Blocks">${String(fixtures.length)}<//>
+      <//>
+    <//>
+    ${drawn()}
+  `;
+}
+
+function SuitesPage() {
+  const state = useAsync(() => Promise.all([loadSuites(), loadIndex()]), []);
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  const [suites, { runs: entries }] = state.value;
+  const runsOf = (suite) => entries.filter((entry) => entry.suite === suite.name).length;
+
+  // Every column here is answered by the registry and the index, so listing the suites loads no
+  // profile at all.
+  return html`
+    <${Card} title="Suites">
+      <${DataTable}
+        columns=${[
+          column(
+            'suite',
+            'Suite',
+            (suite) => suite.name,
+            (suite) => html`<${SuiteLink} suite=${suite.name} />`
+          ),
+          {
+            ...column(
+              'description',
+              'Description',
+              (suite) => suite.description,
+              (suite) => html`<${Truncate} text=${suite.description} />`
+            ),
+            fill: true,
+          },
+          figureColumn('blocks', 'Blocks', (suite) => suite.blocks.length, String),
+          // A corpus nothing has been profiled over still sorts as the nothing it holds.
+          figureColumn('runs', 'Runs', runsOf, (count) => (count ? String(count) : DASH)),
+        ]}
+        rows=${suites}
+        rowKey=${(suite) => suite.name}
+        initialSort=${{ key: 'suite', direction: 'ascending' }}
+        empty="No suite registered." />
+    <//>
+  `;
+}
+
+/* Every run of a suite's own page is of this corpus, which is therefore no column and no
+   grouping. */
+const SUITE_FIXED = ['Suite'];
+
+function SuiteView({ suite, entries }) {
+  const figures = useFigures(entries);
+
+  /* The corpus as the registry states it, which is every block in it against the number and the gas
+     the block carries, so the listing is the corpus rather than the part of it some run reached. */
+  const names = useMemo(() => suite.blocks.map((block) => block.name), [suite]);
+  const metadata = useMemo(
+    () => new Map(suite.blocks.map((block) => [block.name, block])),
+    [suite]
+  );
+
+  return html`
+    <${Card} title="Suite">
+      <${FieldStrip}>
+        <${Field} label="Name">${suite.name}<//>
+        <${Field} label="Description">${suite.description}<//>
+        <${Field} label="Blocks">${String(suite.blocks.length)}<//>
+        <${Field} label="Runs">${String(entries.length)}<//>
+      <//>
+    <//>
+    <${BlocksPanel}
+      names=${names}
+      metadata=${(name) => metadata.get(name)} />
+    <${RunsPanel}
+      entries=${entries}
+      figures=${figures}
+      suiteBlocks=${() => suite.blocks.length}
+      fixed=${SUITE_FIXED} />
+  `;
+}
+
+function SuitePage({ name }) {
+  const state = useAsync(async () => {
+    const [suites, { runs }] = await Promise.all([loadSuites(), loadIndex()]);
+    const suite = suites.find((candidate) => candidate.name === name);
+    if (!suite) throw new Error('No suite named ' + name);
+    return { suite, entries: runs.filter((entry) => entry.suite === name) };
+  }, [name]);
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  return html`<${SuiteView} ...${state.value} />`;
+}
+
+/* The run list is the page the site opens on, so the root stands for it, and a comparison is reached
+   from that list and returns to it, so both stand under the same section. */
+const SECTIONS = [
+  { href: 'runs', label: 'Runs' },
+  { href: 'suites', label: 'Suites' },
+];
+
+function page(full) {
+  const [path, search = ''] = full.split('?');
+  if (path === 'compare') {
+    const runs = new URLSearchParams(search).get('runs');
+    return {
+      section: 'runs',
+      view: runs
+        ? html`<${ComparePage} ids=${runs.split(',')} />`
+        : html`<${ErrorCard} message="No run to compare" />`,
+    };
+  }
+  if (path === 'runs') return { section: 'runs', view: html`<${RunsPage} />` };
+  if (path.startsWith('runs/')) {
+    return { section: 'runs', view: html`<${RunPage} id=${path.slice('runs/'.length)} />` };
+  }
+  if (path === 'suites') return { section: 'suites', view: html`<${SuitesPage} />` };
+  if (path.startsWith('suites/')) {
+    return {
+      section: 'suites',
+      view: html`<${SuitePage} name=${path.slice('suites/'.length)} />`,
+    };
+  }
+  return {
+    section: null,
+    view: html`<${ErrorCard} message=${'No page at ' + BASE + path} />`,
+  };
+}
+
+/* A profile that parses but is not shaped as the page expects throws while it is being drawn rather
+   than while it is being read, which is reported where the page would have been rather than left as
+   a blank screen. It is keyed on the route, so leaving the page that failed clears it. */
+function Drawn({ children }) {
+  const [error] = useErrorBoundary();
+  if (error) return html`<${ErrorCard} message=${error.message} />`;
+  return children;
+}
+
+function App() {
+  const full = route.value;
+  const { section, view } = page(full);
+
+  // A reader who lands on the root, or on a route spelled with the slash a directory would carry,
+  // leaves with the address that names what they are looking at.
+  useEffect(() => {
+    const url = new URL(full, document.baseURI);
+    if (url.pathname !== location.pathname) history.replaceState(null, '', url);
+  }, [full]);
+
+  return html`
+    <header>
+      <h1>zkEVM guest cost estimation</h1>
+      <nav aria-label="Sections">
+        ${SECTIONS.map(
+          (item) => html`
+            <${Link}
+              key=${item.href}
+              class="nav-link"
+              href=${item.href}
+              aria-current=${section === item.href ? 'page' : null}>
+              ${item.label}
+            <//>
+          `
+        )}
+      </nav>
+    </header>
+    <!-- Keyed on the route, so leaving a page throws away everything it held, the charts it mounted
+         included. -->
+    <main key=${full}><${Drawn}>${view}<//></main>
+  `;
+}
+
+render(html`<${App} />`, document.getElementById('app'));
+</script>
 </body>
 </html>

@@ -5,15 +5,45 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      stateless-validator:
+        description: Guest to profile, or every guest the registry lists when left empty.
+        required: false
+        default: ''
+        type: string
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  guests:
+    uses: ./.github/workflows/guests.yml
+    with:
+      zkvm: zisk
+      stateless-validator: ${{ inputs.stateless-validator || '' }}
+
   profile:
-    uses: ./.github/workflows/profile.yml
+    needs: guests
+    name: ${{ matrix.stateless-validator }}
     permissions:
       contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        stateless-validator: ${{ fromJSON(needs.guests.outputs.stateless-validators) }}
+    uses: ./.github/workflows/profile.yml
+    with:
+      zkvm: zisk
+      stateless-validator: ${{ matrix.stateless-validator }}
+
+  # Every guest published as it finished, so the comparison waits for the matrix rather than being
+  # drawn by it, and covers whichever guests got through when one of them did not. A pull request
+  # publishes nothing and so reports what the branch already holds, which is what exercises the
+  # script before it reaches main.
+  report:
+    needs: profile
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/report.yml
     with:
       zkvm: zisk

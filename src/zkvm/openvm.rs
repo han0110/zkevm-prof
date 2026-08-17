@@ -35,7 +35,7 @@ use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler, heap_range, peak
 /// in the base instruction set, which is the comparison worth drawing across guests running the
 /// same block. Loads and stores stay under `rv64` because a guest cannot choose them away.
 pub const COMPOSITION: Composition = Composition {
-    total: "cost",
+    total: "total",
     components: &[
         Kind {
             name: PRECOMPILE,

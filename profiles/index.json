@@ -1,0 +1,494 @@
+{
+  "runs": [
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "49c817c4cc43f8757cf452c3cbe2f0cc67881da9dd6d05581eaa1e95e2443b8b",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786849751,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "49c817c4cc43f8757cf452c3cbe2f0cc67881da9dd6d05581eaa1e95e2443b8b",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786849648,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "nethermind",
+      "stateless_validator_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "ce2cf1ed11ea1fe2865f2fd5888869321dd555f6ef29b942eadc9985f65fba24",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786773443,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7.2-2026-07-29",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-zesu-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "088a71b8ff69630de88b970a6a633911c2ecaaeb4be7cb9ca5b356f6e622f89d",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786771470,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "6b247ff7eb39233d309a787ac8fea28204f40aebc6b356febe6e496af5bcbb55",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786763595,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "bdded7f70c4f8859d9c4a648c6d4c315fa470196f46493e7843c2dce03536c93",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786760037,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "sp1",
+      "zkvm_version": "v6.3.1",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-sp1-v6.3.1.elf",
+      "elf_sha256": "bbca19a3e43bb56265180c8c64c66f6a49f632d72107150f96044869e530aa36",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786751356,
+      "composition": [
+        {
+          "name": "syscall",
+          "note": "Precompiles"
+        },
+        {
+          "name": "system",
+          "note": "Memory and tables"
+        },
+        {
+          "name": "opcode",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "sp1",
+      "zkvm_version": "v6.3.1",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-sp1-v6.3.1.elf",
+      "elf_sha256": "1c02d408de34cc8ed92e32903487e90cc580e499819d566ad3cd2a336488f7a8",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786747980,
+      "composition": [
+        {
+          "name": "syscall",
+          "note": "Precompiles"
+        },
+        {
+          "name": "system",
+          "note": "Memory and tables"
+        },
+        {
+          "name": "opcode",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "0e5355489a37a8402cf3988f78700cbecaaadba9fcc4e210d58387cc9f782e98",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786725074,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "6b31e1f6ecdafbfcbe850ecc3d537c4db13cec57d7ef2f36daa6e7b63109a18d",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1786724714,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "nethermind",
+      "stateless_validator_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/nethermind/releases/download/glamsterdam-devnet-7/stateless-validator-nethermind-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "ce2cf1ed11ea1fe2865f2fd5888869321dd555f6ef29b942eadc9985f65fba24",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786704836,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "bdded7f70c4f8859d9c4a648c6d4c315fa470196f46493e7843c2dce03536c93",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786700096,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "sp1",
+      "zkvm_version": "v6.3.1",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-sp1-v6.3.1.elf",
+      "elf_sha256": "bbca19a3e43bb56265180c8c64c66f6a49f632d72107150f96044869e530aa36",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786697722,
+      "composition": [
+        {
+          "name": "syscall",
+          "note": "Precompiles"
+        },
+        {
+          "name": "system",
+          "note": "Memory and tables"
+        },
+        {
+          "name": "opcode",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "6b247ff7eb39233d309a787ac8fea28204f40aebc6b356febe6e496af5bcbb55",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786696728,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "sp1",
+      "zkvm_version": "v6.3.1",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-sp1-v6.3.1.elf",
+      "elf_sha256": "1c02d408de34cc8ed92e32903487e90cc580e499819d566ad3cd2a336488f7a8",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786695447,
+      "composition": [
+        {
+          "name": "syscall",
+          "note": "Precompiles"
+        },
+        {
+          "name": "system",
+          "note": "Memory and tables"
+        },
+        {
+          "name": "opcode",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.0.0-alpha",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7.2-2026-07-29",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-zesu-zisk-v1.0.0-alpha.elf",
+      "elf_sha256": "088a71b8ff69630de88b970a6a633911c2ecaaeb4be7cb9ca5b356f6e622f89d",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786694806,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "0e5355489a37a8402cf3988f78700cbecaaadba9fcc4e210d58387cc9f782e98",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786687938,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.15.0/stateless-validator-ethrex-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "6b31e1f6ecdafbfcbe850ecc3d537c4db13cec57d7ef2f36daa6e7b63109a18d",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1786687922,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    }
+  ]
+}

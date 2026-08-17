@@ -1,22 +1,20 @@
 #!/usr/bin/env python3
-"""Reports the published runs of one zkVM as the tables a comparison is pasted from.
+"""Reports the runs of one zkVM under a directory as the tables a comparison is pasted from.
 
-Usage: report.py --dir <published profiles> --zkvm <name>
+Usage: report.py --dir <profiles> --zkvm <name>
 
-The index names every run published under the directory, so the newest run of each guest is picked
-out of it and only the profiles behind those are read. Two runs are comparable only when the harness,
-the zkVM version and the corpus all agree, since costs from two SDK versions come from different
-circuits and two corpora share no block at all, so the newest run of the zkVM fixes those three and a
-guest contributes its own newest run that matches them. Guests are then compared over the blocks all
-of them profiled, so one that failed on some does not come out cheaper for having skipped them.
+Every profile under the directory is read and stated by the meta it carries, which holds every field
+an index lists a run by, so a published tree and the artifacts of one workflow run report alike. Two
+runs are comparable only when the harness, the zkVM version and the corpus all agree, since costs
+from two SDK versions come from different circuits and two corpora share no block at all, so the
+newest run of the zkVM fixes those three and a guest contributes its own newest run that matches
+them. Guests are then compared over the blocks all of them profiled, so one that failed on some does
+not come out cheaper for having skipped them.
 """
 
 import argparse
 import json
 import os
-
-# Digits of the ELF hash a published profile is filed under.
-ELF_SHA256_PREFIX = 16
 
 
 def read(path):
@@ -28,44 +26,49 @@ def read(path):
         raise SystemExit(f"failed to read {path}, {error}")
 
 
-def published(directory, zkvm):
+def profiles(directory):
+    """Every profile under the directory, which is every JSON file in it but the index itself.
+
+    The index is excluded by the path it sits at rather than by the name it carries, so a corpus
+    called index keeps its profile read.
+    """
+    if not os.path.isdir(directory):
+        raise SystemExit(f"{directory} is no directory of profiles")
+    index = os.path.join(directory, "index.json")
+    found = []
+    for walked, directories, filenames in os.walk(directory):
+        directories.sort()
+        for filename in sorted(filenames):
+            path = os.path.join(walked, filename)
+            if filename.endswith(".json") and path != index:
+                found.append(read(path))
+    return found
+
+
+def comparable(directory, zkvm):
     """The newest run of each guest of `zkvm`, alongside the run they are all comparable with."""
-    index = read(os.path.join(directory, "index.json"))
-    # Ordered here rather than taken from the index, so the newest is the newest by the field that
-    # says so.
     listed = sorted(
-        (run for run in index["runs"] if run["zkvm"] == zkvm),
-        key=lambda run: run["generated_at"],
+        (document for document in profiles(directory) if document["meta"]["zkvm"] == zkvm),
+        key=lambda document: document["meta"]["generated_at"],
         reverse=True,
     )
     if not listed:
-        raise SystemExit(f"the index lists no run on {zkvm}")
-    newest = listed[0]
-    comparable = {}
-    for run in listed:
-        if all(run[field] == newest[field] for field in ("version", "zkvm_version", "suite")):
-            comparable.setdefault(run["stateless_validator"], run)
-    return newest, [comparable[guest] for guest in sorted(comparable)]
+        raise SystemExit(f"{directory} holds no profile of {zkvm}")
+    newest = listed[0]["meta"]
+    picked = {}
+    for document in listed:
+        meta = document["meta"]
+        if all(meta[field] == newest[field] for field in ("version", "zkvm_version", "suite")):
+            picked.setdefault(meta["stateless_validator"], document)
+    return newest, [picked[guest] for guest in sorted(picked)]
 
 
-def profile(directory, run):
-    """The profile a run published, which sits at the path its own fields compose."""
-    sha256 = run["elf_sha256"]
-    if not sha256:
-        raise SystemExit(f"the run of {run['stateless_validator']} records no ELF hash")
-    return read(
-        os.path.join(
-            directory,
-            run["stateless_validator"],
-            sha256[:ELF_SHA256_PREFIX],
-            run["suite"] + ".json",
-        )
-    )
-
-
-def series(run, document, shared, kinds):
+def series(document, shared, kinds):
     """One guest's figures over the shared blocks, in the units it was profiled in."""
-    label = run["stateless_validator"]
+    meta = document["meta"]
+    label = meta["stateless_validator"]
+    if not meta["elf_sha256"]:
+        raise SystemExit(f"the run of {label} records no ELF hash")
     blocks = [document["profile"][name] for name in shared]
     for name in sorted(shared):
         cost = document["profile"][name]["cost"]
@@ -82,8 +85,8 @@ def series(run, document, shared, kinds):
     peaks = [block["peak_heap_bytes"] for block in blocks if "peak_heap_bytes" in block]
     return {
         "label": label,
-        "version": run["stateless_validator_version"],
-        "sha256": short_sha256(run["elf_sha256"]),
+        "version": meta["stateless_validator_version"],
+        "sha256": short_sha256(meta["elf_sha256"]),
         "total": sum(block["cost"]["total"] for block in blocks),
         "components": [sum(block["cost"][kind] for block in blocks) for kind in kinds],
         # A mean rather than the largest, since one figure per guest is there to compare how much
@@ -179,22 +182,16 @@ def report(newest, guests, blocks, kinds):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--dir", default="profiles", help="directory the profiles are published under"
-    )
-    parser.add_argument("--zkvm", required=True, help="zkVM to report the published runs of")
+    parser.add_argument("--dir", default="profiles", help="directory the profiles sit under")
+    parser.add_argument("--zkvm", required=True, help="zkVM to report the runs of")
     arguments = parser.parse_args()
 
-    newest, runs = published(arguments.dir, arguments.zkvm)
-    documents = [profile(arguments.dir, run) for run in runs]
+    newest, documents = comparable(arguments.dir, arguments.zkvm)
     shared = set.intersection(*(set(document["profile"]) for document in documents))
     if not shared:
-        raise SystemExit(f"the published runs on {arguments.zkvm} share no profiled block")
+        raise SystemExit(f"the runs on {arguments.zkvm} share no profiled block")
     kinds = newest["composition"]
-    guests = [
-        series(run, document, shared, [kind["name"] for kind in kinds])
-        for run, document in zip(runs, documents)
-    ]
+    guests = [series(document, shared, [kind["name"] for kind in kinds]) for document in documents]
     print(report(newest, guests, len(shared), kinds))
 
 

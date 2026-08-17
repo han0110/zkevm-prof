@@ -110,7 +110,7 @@ jobs:
           ZKVM: ${{ inputs.zkvm }}
           STATELESS_VALIDATOR: ${{ inputs.stateless-validator }}
         run: |
-          mkdir -p profiles produced
+          mkdir -p profiles produced standing
           if [[ -d published/profiles ]]; then cp -r published/profiles/. profiles/; fi
           touch since
           # A narrowed run covers part of a corpus under that corpus's own name, so it is measured
@@ -124,12 +124,18 @@ jobs:
             "${narrowed[@]}" \
             --output-dir profiles
           find profiles -name '*.json' -newer since -exec cp --parents {} produced/ \;
+          # What the report reads, which is every run of this guest over the corpus rather than only
+          # what this job wrote, so a guest skipped as already published is still reported.
+          find "profiles/${STATELESS_VALIDATOR}" -name "${SUITE}.json" \
+            -exec cp --parents {} standing/ \;
 
+      # The report picks the newest run of each guest out of these, so it covers the whole matrix
+      # whether a guest was measured again or skipped, and states figures this run holds rather
+      # than figures read off a page a pull request never publishes to.
       - uses: actions/upload-artifact@v7
         with:
           name: profiles-${{ inputs.stateless-validator }}-${{ inputs.zkvm }}
-          path: produced/profiles
-          if-no-files-found: ignore
+          path: standing/profiles
 
       # The page is static and reads the runs it can load from an index written beside them, so the
       # site is published next to the profiles and the two registries it fetches, with the index

@@ -4,47 +4,29 @@ on:
   workflow_call:
     inputs:
       zkvm:
-        description: zkVM to report the published runs of.
+        description: zkVM to report the runs of.
         required: true
         type: string
 
-env:
-  # Branch the page is published to, which is where every guest of this run left its profiles.
-  PAGES_BRANCH: gh-pages
-
 jobs:
-  # Drawn from the index rather than from what any one guest produced, so the tables cover the newest
-  # run of every guest on the zkVM whether this run reprofiled it or skipped it as unchanged.
+  # Drawn from what the matrix uploaded rather than from the published page, so every figure is one
+  # this workflow run holds and a pull request, publishing nothing, reports the runs it measured
+  # itself. Each guest uploads every run of itself over the corpus, so a guest the profiler skipped
+  # as already published is reported alongside the ones it measured again.
   report:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
-      # A repository that has published nothing yet has nothing to report, while a fault reaching the
-      # branch is a fault rather than an empty page.
-      - name: Look for the published page
-        id: pages
-        run: |
-          status=0
-          git ls-remote --exit-code --heads origin "${PAGES_BRANCH}" > /dev/null || status=$?
-          case "${status}" in
-            0) echo "exists=true" >> "${GITHUB_OUTPUT}" ;;
-            2) ;;
-            *) exit "${status}" ;;
-          esac
-
-      # Read off the branch rather than over HTTP, since a Pages deployment lands some time after the
-      # push that triggers it.
-      - uses: actions/checkout@v7
-        if: steps.pages.outputs.exists == 'true'
+      - uses: actions/download-artifact@v8
         with:
-          ref: ${{ env.PAGES_BRANCH }}
-          path: published
+          pattern: profiles-*-${{ inputs.zkvm }}
+          path: profiles
+          merge-multiple: true
 
       - name: Report
-        if: steps.pages.outputs.exists == 'true'
         env:
           ZKVM: ${{ inputs.zkvm }}
         run: |
-          python3 .github/scripts/report.py --dir published/profiles --zkvm "${ZKVM}" \
+          python3 .github/scripts/report.py --dir profiles --zkvm "${ZKVM}" \
             >> "${GITHUB_STEP_SUMMARY}"

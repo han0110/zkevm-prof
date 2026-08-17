@@ -37,9 +37,9 @@ jobs:
       zkvm: openvm
       stateless-validator: ${{ matrix.stateless-validator }}
 
-  # Every guest published as it finished, so the comparison waits for the matrix rather than being
-  # drawn by it, and covers whichever guests got through when one of them did not. A pull request
-  # publishes nothing and so reports what the branch already holds, which is what exercises the
+  # Every guest uploaded its profile as it finished, so the comparison waits for the matrix rather
+  # than being drawn by it, and covers whichever guests got through when one of them did not. A pull
+  # request publishes nothing and reports the runs it measured itself, which is what exercises the
   # script before it reaches main.
   report:
     needs: profile

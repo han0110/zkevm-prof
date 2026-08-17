@@ -960,9 +960,7 @@ const runId = (run) => run.generated_at + '-' + run.stateless_validator + '-' + 
 const runPath = (run) =>
   [run.stateless_validator, run.elf_sha256.slice(0, 16), run.suite].join('/');
 
-/* Read again for every page, since a run published while a reader has the page open is what they
-   are looking for when they go back to the listing. */
-async function loadIndex() {
+async function fetchIndex() {
   const index = await json('profiles/index.json', 'No profile index published');
   const runs = index.runs.map((run) => ({ ...run, runId: runId(run) }));
   return { runs, byRunId: new Map(runs.map((run) => [run.runId, run])) };
@@ -970,7 +968,7 @@ async function loadIndex() {
 
 /* The suites in the order the registry lists them. A page served without it lists no suite rather
    than failing, since the runs name their own suite anyway. */
-async function loadSuites() {
+async function fetchSuites() {
   try {
     const registry = await json('suite-registry.json', 'No suite registry published');
     return Object.entries(registry).map(([name, suite]) => ({ name, ...suite }));
@@ -979,13 +977,41 @@ async function loadSuites() {
   }
 }
 
+/* Both are read before the page first draws and held for the session, so moving from one page to
+   another draws what is already in hand and only the first load is ever waited on. The index is held
+   in a signal, since what it names is what a later look for newly published runs replaces. */
+const suites = await fetchSuites();
+const index = signal(await fetchIndex());
+
 /* How large the corpus a run covers is, which is what the blocks it profiled are stated out of. A
    suite the registry leaves out has no size to state, and the run then reports its own count
    alone. */
-async function loadSuiteBlocks() {
-  const suites = await loadSuites();
-  const sizes = new Map(suites.map((suite) => [suite.name, suite.blocks.length]));
-  return (entry) => sizes.get(entry.suite) ?? null;
+const suiteSizes = new Map(suites.map((suite) => [suite.name, suite.blocks.length]));
+const suiteBlocks = (entry) => suiteSizes.get(entry.suite) ?? null;
+
+/* Looked at again as the reader moves, since a run published while they have the page open is what
+   they are after when they come back to the listing. Only what the index newly names is fetched, a
+   profile already in hand being keyed by a path that names the ELF it measured, and a look that
+   fails leaves what is drawn rather than emptying it. */
+function lookForNewRuns() {
+  // Looked at once the page the reader opened has drawn, so neither the request nor the redraw a
+  // newly published run causes ever stands between a click and what it opens.
+  if (window.requestIdleCallback) requestIdleCallback(() => refreshIndex());
+  else setTimeout(() => refreshIndex(), 0);
+}
+
+async function refreshIndex() {
+  let fresh;
+  try {
+    fresh = await fetchIndex();
+  } catch {
+    return;
+  }
+  const held = index.value.runs;
+  const same =
+    fresh.runs.length === held.length &&
+    fresh.runs.every((run, at) => run.runId === held[at].runId);
+  if (!same) index.value = fresh;
 }
 
 /* Keyed on the path a run's file sits at, which names the ELF and the harness version, so what sits
@@ -993,10 +1019,18 @@ async function loadSuiteBlocks() {
    fetched again by the next page to draw it. */
 const profiles = new Map();
 
+/* A run's profile where it is already in hand, which the listing puts there for every run it draws,
+   so opening one of them waits on nothing. */
+const runInHand = (entry) => profiles.get(runPath(entry))?.landed;
+
 function loadRun(entry) {
   const path = runPath(entry);
   if (!profiles.has(path)) {
-    profiles.set(path, json('profiles/' + path + '.json', 'No profile published for ' + entry.runId));
+    const pending = json('profiles/' + path + '.json', 'No profile published for ' + entry.runId);
+    // Kept on the promise once it lands, so a page drawn from it later has it on the frame it draws
+    // rather than a turn of the event loop after.
+    pending.then((profile) => (pending.landed = profile));
+    profiles.set(path, pending);
   }
   return profiles.get(path);
 }
@@ -1127,10 +1161,12 @@ function navigate(href) {
   move.call(history, null, '', url);
   route.value = here();
   scrollTo(0, 0);
+  lookForNewRuns();
 }
 
 addEventListener('popstate', () => {
   route.value = here();
+  lookForNewRuns();
 });
 
 /* A link within the page, which is answered without a reload. Anything the reader means to open
@@ -1287,6 +1323,16 @@ function Choice({ label, domain, value, print, onChange }) {
   `;
 }
 
+/* A dimension answered yes or no, offered as the one chip that turns it on. */
+const Toggle = ({ label, value, print, onChange }) => html`
+  <div>
+    <span class="filter-label">${label}</span>
+    <div class="chips" role="group" aria-label=${label}>
+      <${Chip} pressed=${value} onClick=${() => onChange(!value)}>${print(true)}<//>
+    </div>
+  </div>
+`;
+
 /* Opens under the chip that raised it, and closes on the next press outside it or on Escape, so a
    reader working inside it is not interrupted and one done with it is not left holding it open. */
 function Menu({ label, open, answering, onOpen, children }) {
@@ -1338,6 +1384,8 @@ const NOTHING = [];
 
 const RANGE = {
   control: (props) => html`<${Range} ...${props} />`,
+  // A figure every row answers the same way leaves the thumbs nowhere to go.
+  offers: (domain) => domain.length > 1,
   sorted: (values) => values.sort((left, right) => left - right),
   whole: (domain) => [domain[0], domain[domain.length - 1]],
   covers: (answer, domain) => answer[0] <= domain[0] && answer[1] >= domain[domain.length - 1],
@@ -1356,6 +1404,7 @@ const RANGE = {
 
 const CHOICE = {
   control: (props) => html`<${Choice} ...${props} />`,
+  offers: (domain) => domain.length > 1,
   sorted: (values) => values.sort(),
   whole: () => [],
   // Answering with none of the values reads as answering with all of them, so neither narrows.
@@ -1368,6 +1417,20 @@ const CHOICE = {
   presetLabel: (from, dimension) => dimension.print(from),
 };
 
+/* A dimension a row either answers or does not, which is offered whatever the rows hold, there being
+   an answer to give either way. */
+const FLAG = {
+  control: (props) => html`<${Toggle} ...${props} />`,
+  offers: () => true,
+  sorted: (values) => values,
+  whole: () => false,
+  covers: (answer) => !answer,
+  matches: (answer, value) => value,
+  presetPressed: (from, scale, held) => held === true,
+  presetAnswer: (from, scale, held) => !held,
+  presetLabel: (from, dimension) => dimension.print(from),
+};
+
 /*
  * What a listing is narrowed by, one answer per dimension and held only for the dimensions actually
  * narrowing, so a listing narrowed by nothing carries nothing.
@@ -1377,7 +1440,13 @@ const CHOICE = {
  * it sinks under a sort of that column.
  */
 function useFilters(dimensions, rows) {
-  const [answers, setAnswers] = useState(EMPTY_ANSWERS);
+  const [answers, setAnswers] = useState(() =>
+    Object.fromEntries(
+      dimensions
+        .filter((dimension) => dimension.initial !== undefined)
+        .map((dimension) => [dimension.key, dimension.initial])
+    )
+  );
   const [configuring, setConfiguring] = useState(false);
 
   const scales = useMemo(() => {
@@ -1387,7 +1456,7 @@ function useFilters(dimensions, rows) {
         rows.map(dimension.of).filter((value) => value != null)
       );
       const domain = [...new Set(values)];
-      if (domain.length > 1) held.set(dimension.key, { values, domain });
+      if (dimension.kind.offers(domain)) held.set(dimension.key, { values, domain });
     }
     return held;
   }, [dimensions, rows]);
@@ -1451,9 +1520,8 @@ function Preset({ filters, dimension, from }) {
 /* The one row a listing is narrowed from, which is a preset per shortcut the dimensions name, the
    panel holding a control for each of them and, once something is narrowing, what it left and the
    way back. */
-const Filters = ({ filters, kept, total, children }) => html`
+const Filters = ({ filters, kept, total }) => html`
   <${ChipSet} label="Filter">
-    ${children}
     ${filters.offered.flatMap((dimension) =>
       (dimension.presets?.(filters.scales.get(dimension.key).domain) ?? []).map(
         (from) =>
@@ -2509,17 +2577,30 @@ function RunsPanel({ entries, figures, suiteBlocks, fixed = NOTHING }) {
   const [grouping, setGrouping] = useState(
     () => new Set(COMPARISON_GROUPS.filter((label) => !fixed.includes(label)))
   );
-  /* The list opens on what each guest costs today, its history being what a reader asks for rather
-     than what they land on. */
-  const [latestOnly, setLatestOnly] = useState(true);
+  /* The newest run of each guest on each zkVM and corpus, the ELF being no part of that key, a guest
+     rebuilt from the same source being the same guest. */
+  const latest = useMemo(
+    () => new Set(recentRuns(entries).map((entry) => entry.runId)),
+    [entries]
+  );
   /* Nothing until the reader opens a selection, which is also what puts the column in. */
   const [selected, setSelected] = useState(null);
 
-  /* The zkVM and the corpus are what a reader picks a run list down to, and neither is offered
-     where the list already stands for one of them. */
+  /* What a reader picks a run list down to. The zkVM and the corpus are no part of a list that
+     already stands for one of them, while the newest of each guest is asked of any list, which is
+     what it opens on, a run's history being what a reader asks for rather than what they land on. */
   const dimensions = useMemo(
     () =>
       [
+        {
+          kind: FLAG,
+          key: 'latest',
+          label: 'Profiles',
+          of: (entry) => latest.has(entry.runId),
+          print: () => 'Latest',
+          initial: true,
+          presets: () => [true],
+        },
         {
           kind: CHOICE,
           key: 'zkvm',
@@ -2531,17 +2612,13 @@ function RunsPanel({ entries, figures, suiteBlocks, fixed = NOTHING }) {
         },
         { kind: CHOICE, key: 'suite', label: 'Suite', of: (entry) => entry.suite },
       ].filter((dimension) => !fixed.includes(dimension.label)),
-    [fixed]
+    [fixed, latest]
   );
   const narrowing = useFilters(dimensions, entries);
 
-  const recent = useMemo(
-    () => (latestOnly ? recentRuns(entries) : entries),
-    [entries, latestOnly]
-  );
   const listed = useMemo(
-    () => (narrowing.narrowing ? recent.filter(narrowing.keep) : recent),
-    [recent, narrowing.answers]
+    () => (narrowing.narrowing ? entries.filter(narrowing.keep) : entries),
+    [entries, narrowing.answers]
   );
 
   /* A run the listing no longer holds cannot be unpicked, so a narrowing takes it out of the
@@ -2641,11 +2718,7 @@ function RunsPanel({ entries, figures, suiteBlocks, fixed = NOTHING }) {
           groups=${groups}
           grouping=${grouping}
           onToggle=${(label) => setGrouping((held) => toggled(held, label))} />
-        <${Filters} filters=${narrowing} kept=${listed.length} total=${recent.length}>
-          <${Chip} pressed=${latestOnly} onClick=${() => setLatestOnly((held) => !held)}>
-            Latest
-          <//>
-        <//>
+        <${Filters} filters=${narrowing} kept=${listed.length} total=${entries.length} />
       </div>
       <${DataTable}
         columns=${shown}
@@ -2966,9 +3039,25 @@ function CostPanels({ rows, fixtures, shares }) {
 /* The five pages. Each loads what it draws from and renders nothing until it is in, since a page
    whose numbers have not landed has nothing to say. */
 
-function useAsync(load, deps) {
+/* True once the frame carrying everything before it has been painted. A listing of a thousand blocks
+   is the bulk of a page's work and sits below the charts, so holding it back one frame lets the
+   charts, which are drawn by an effect after the commit, come up without waiting on it. */
+function usePainted() {
+  const [painted, setPainted] = useState(false);
+  useEffect(() => {
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => setPainted(true));
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return painted;
+}
+
+function useAsync(load, deps, ready) {
   const [state, setState] = useState({});
   useEffect(() => {
+    // Nothing to wait for, so nothing is drawn empty while it is waited for.
+    if (ready !== undefined) return;
     let live = true;
     setState({});
     Promise.resolve()
@@ -2981,7 +3070,7 @@ function useAsync(load, deps) {
       live = false;
     };
   }, deps);
-  return state;
+  return ready === undefined ? state : { value: ready };
 }
 
 /*
@@ -3015,17 +3104,14 @@ const RunsView = ({ entries, suiteBlocks }) => {
 };
 
 function RunsPage() {
-  const state = useAsync(() => Promise.all([loadIndex(), loadSuiteBlocks()]), []);
-  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
-  if (!state.value) return null;
-  const [{ runs }, suiteBlocks] = state.value;
-  return html`<${RunsView} entries=${runs} suiteBlocks=${suiteBlocks} />`;
+  return html`<${RunsView} entries=${index.value.runs} suiteBlocks=${suiteBlocks} />`;
 }
 
 function RunView({ entry, run, fixtures, figures, size }) {
   /* A block is read for what it spent its cost on rather than for the magnitudes, which is what the
      total beside them already carries, so the kinds open as shares of it. */
   const [shares, setShares] = useState(true);
+  const painted = usePainted();
   const cost = (name) => run.profile[name].cost;
   const metadata = (name) => run.profile[name].metadata;
   /* What the run is short of its corpus by, listed the same way and only where there is something
@@ -3114,7 +3200,10 @@ function RunView({ entry, run, fixtures, figures, size }) {
     <!-- A lone run has nothing to be measured against, so what its cost splits into is all its
          composition has to say. -->
     <${CostPanels} rows=${drawn} fixtures=${fixtures} shares />
-    <${BlocksPanel}
+    <!-- Held back until the charts above have been drawn, a thousand blocks being the bulk of the
+         page's work and none of what a reader landing on it looks at first. -->
+    ${painted &&
+    html`<${BlocksPanel}
       names=${fixtures}
       metadata=${metadata}
       filters=${dimensions}
@@ -3139,8 +3228,9 @@ function RunView({ entry, run, fixtures, figures, size }) {
           (name) => run.profile[name].peak_heap_bytes ?? null,
           bytes
         ),
-      ]} />
-    ${failed.length > 0 &&
+      ]} />`}
+    ${painted &&
+    failed.length > 0 &&
     html`<${BlocksPanel}
       title="Failures"
       names=${failed}
@@ -3154,22 +3244,40 @@ function RunView({ entry, run, fixtures, figures, size }) {
 }
 
 function RunPage({ id }) {
-  const state = useAsync(async () => {
-    const [{ byRunId }, suiteBlocks] = await Promise.all([loadIndex(), loadSuiteBlocks()]);
-    const entry = byRunId.get(id);
-    if (!entry) throw new Error('No run ' + id);
-    const run = await loadRun(entry);
+  const entry = index.value.byRunId.get(id);
+  const drawn = (run) => {
     const fixtures = sharedFixtures([run]);
     return { entry, run, fixtures, figures: statistics(run, fixtures), size: suiteBlocks(entry) };
-  }, [id]);
+  };
+  const held = entry && runInHand(entry);
+  const ready = useMemo(() => (held ? drawn(held) : undefined), [id, held]);
+  const state = useAsync(
+    async () => {
+      if (!entry) throw new Error('No run ' + id);
+      return drawn(await loadRun(entry));
+    },
+    [id],
+    ready
+  );
   if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
   if (!state.value) return null;
   return html`<${RunView} ...${state.value} />`;
 }
 
 function ComparePage({ ids }) {
+  const { byRunId } = index.value;
+  /* Every run named, and its profile, where both are already in hand, which is what lets a
+     comparison reached from the listing draw on the frame it is asked for. */
+  const picked = ids.every((id) => byRunId.has(id)) ? ids.map((id) => byRunId.get(id)) : null;
+  const inHand = picked?.map(runInHand);
+  const ready = useMemo(
+    () =>
+      inHand?.every(Boolean) && picked.every((entry) => comparable(picked[0], entry))
+        ? { entries: picked, runs: inHand, fixtures: sharedFixtures(inHand) }
+        : undefined,
+    [ids.join(',')]
+  );
   const state = useAsync(async () => {
-    const { byRunId } = await loadIndex();
     const missing = ids.find((id) => !byRunId.has(id));
     if (missing) throw new Error('No run ' + missing);
     const entries = ids.map((id) => byRunId.get(id));
@@ -3182,7 +3290,7 @@ function ComparePage({ ids }) {
     }
     const runs = await Promise.all(entries.map((entry) => loadRun(entry)));
     return { entries, runs, fixtures: sharedFixtures(runs) };
-  }, [ids.join(',')]);
+  }, [ids.join(',')], ready);
   if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
   if (!state.value) return null;
   const { entries, runs, fixtures } = state.value;
@@ -3249,10 +3357,7 @@ function ComparePage({ ids }) {
 }
 
 function SuitesPage() {
-  const state = useAsync(() => Promise.all([loadSuites(), loadIndex()]), []);
-  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
-  if (!state.value) return null;
-  const [suites, { runs: entries }] = state.value;
+  const entries = index.value.runs;
   const runsOf = (suite) => entries.filter((entry) => entry.suite === suite.name).length;
 
   // Every column here is answered by the registry and the index, so listing the suites loads no
@@ -3324,15 +3429,10 @@ function SuiteView({ suite, entries }) {
 }
 
 function SuitePage({ name }) {
-  const state = useAsync(async () => {
-    const [suites, { runs }] = await Promise.all([loadSuites(), loadIndex()]);
-    const suite = suites.find((candidate) => candidate.name === name);
-    if (!suite) throw new Error('No suite named ' + name);
-    return { suite, entries: runs.filter((entry) => entry.suite === name) };
-  }, [name]);
-  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
-  if (!state.value) return null;
-  return html`<${SuiteView} ...${state.value} />`;
+  const suite = suites.find((candidate) => candidate.name === name);
+  if (!suite) return html`<${ErrorCard} message=${'No suite named ' + name} />`;
+  const entries = index.value.runs.filter((entry) => entry.suite === name);
+  return html`<${SuiteView} suite=${suite} entries=${entries} />`;
 }
 
 /* The run list is the page the site opens on, so the root stands for it, and a comparison is reached

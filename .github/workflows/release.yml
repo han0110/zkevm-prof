@@ -20,21 +20,14 @@ jobs:
     steps:
       - uses: googleapis/release-please-action@v4
         id: release
-        with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
       # release-please writes the new version into Cargo.toml and stops there, which leaves the lock
-      # naming the old one and every job that builds with --locked failing on the release branch.
-      # Refreshing it needs the network, since the crate carries git dependencies no registry index
-      # can resolve.
+      # naming the old one and every job that builds with --locked failing. Refreshing it needs the
+      # network, since the crate carries git dependencies no registry index can resolve.
       - uses: actions/checkout@v7
         if: steps.release.outputs.pr
         with:
           ref: ${{ fromJson(steps.release.outputs.pr).headBranchName }}
-          # The lock refresh is pushed under the same token release-please opened the branch with,
-          # since a push carrying the job's own token starts no workflow run and would leave the
-          # release pull request holding the failure this step exists to clear.
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
 
       - uses: dtolnay/rust-toolchain@stable
         if: steps.release.outputs.pr

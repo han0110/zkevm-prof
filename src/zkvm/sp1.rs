@@ -61,7 +61,7 @@ const ANCHOR: usize = 64;
 
 /// Cost kinds that partition an SP1 total, in stack order, and the kind holding the whole.
 pub const COMPOSITION: Composition = Composition {
-    total: "cost",
+    total: "total",
     components: &[
         Kind {
             name: SYSCALL,

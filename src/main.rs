@@ -1,7 +1,8 @@
-//! Profiles stateless validator guests on zkVMs and reports the results.
+//! Profiles stateless validator guests on zkVMs and publishes the results.
 //!
 //! `profile` runs one guest over a corpus of EEST fixtures and records the cost the zkVM charges
-//! for each execution. `report` aggregates several such runs into a single page.
+//! for each execution. `index` lists the runs published under a directory, which is what the page
+//! reads to know what it can load.
 
 mod command;
 mod fixture;
@@ -11,7 +12,7 @@ mod zkvm;
 use anyhow::Result;
 use clap::{Parser, Subcommand};
 
-use crate::command::{profile::ProfileCmd, report::ReportCmd};
+use crate::command::{index::IndexCmd, profile::ProfileCmd};
 
 #[derive(Parser)]
 #[command(
@@ -27,14 +28,14 @@ struct Cli {
 enum Command {
     /// Profiles a guest over every fixture in a directory.
     Profile(ProfileCmd),
-    /// Aggregates profiles into a report.
-    Report(ReportCmd),
+    /// Lists the published profiles for the page.
+    Index(IndexCmd),
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     match Cli::parse().command {
         Command::Profile(cmd) => cmd.run().await,
-        Command::Report(cmd) => cmd.run(),
+        Command::Index(cmd) => cmd.run(),
     }
 }

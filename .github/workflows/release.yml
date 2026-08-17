@@ -1,0 +1,62 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+# Two pushes in quick succession would otherwise both force the release branch and both push the lock
+# refresh, and the loser of that race fails on a non-fast-forward.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      # release-please writes the new version into Cargo.toml and stops there, which leaves the lock
+      # naming the old one and every job that builds with --locked failing on the release branch.
+      # Refreshing it needs the network, since the crate carries git dependencies no registry index
+      # can resolve.
+      - uses: actions/checkout@v7
+        if: steps.release.outputs.pr
+        with:
+          ref: ${{ fromJson(steps.release.outputs.pr).headBranchName }}
+          # The lock refresh is pushed under the same token release-please opened the branch with,
+          # since a push carrying the job's own token starts no workflow run and would leave the
+          # release pull request holding the failure this step exists to clear.
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.release.outputs.pr
+
+      - name: Update Cargo.lock
+        if: steps.release.outputs.pr
+        env:
+          CARGO_NET_GIT_FETCH_WITH_CLI: true
+        run: |
+          # The OpenVM submodule tree is large enough that one network fault fails the fetch, which
+          # is retried here as it is in every other workflow that resolves it.
+          for attempt in 1 2 3; do
+            if cargo fetch; then break; fi
+            if [ "${attempt}" = 3 ]; then exit 1; fi
+            sleep 15
+          done
+          if git diff --quiet Cargo.lock; then
+            echo "Cargo.lock already up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.lock
+          git commit -m "chore: update Cargo.lock"
+          git push

@@ -2,3 +2,4 @@
 /fixtures
 /profiles
 *.tar.zst
+__pycache__

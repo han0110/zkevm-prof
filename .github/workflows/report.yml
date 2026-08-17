@@ -1,0 +1,32 @@
+name: Report
+
+on:
+  workflow_call:
+    inputs:
+      zkvm:
+        description: zkVM to report the runs of.
+        required: true
+        type: string
+
+jobs:
+  # Drawn from what the matrix uploaded rather than from the published page, so every figure is one
+  # this workflow run holds and a pull request, publishing nothing, reports the runs it measured
+  # itself. Each guest uploads every run of itself over the corpus, so a guest the profiler skipped
+  # as already published is reported alongside the ones it measured again.
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: profiles-*-${{ inputs.zkvm }}
+          path: profiles
+          merge-multiple: true
+
+      - name: Report
+        env:
+          ZKVM: ${{ inputs.zkvm }}
+        run: |
+          python3 .github/scripts/report.py --dir profiles --zkvm "${ZKVM}" \
+            >> "${GITHUB_STEP_SUMMARY}"

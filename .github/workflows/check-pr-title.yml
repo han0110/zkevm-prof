@@ -1,0 +1,25 @@
+name: Check PR title
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      # A squashed pull request lands under its title, which is what release-please reads to decide
+      # the next version.
+      - name: Validate conventional commit format
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          PATTERN='^(feat|fix|refactor|docs|test|chore|ci|perf|build|revert)(\(.+\))?\!?: .+'
+          if [[ ! "$TITLE" =~ $PATTERN ]]; then
+            echo "::error::the title '${TITLE}' is not of the form <type>(<scope>)!: <description>, where <type> is one of feat fix refactor docs test chore ci perf build revert"
+            exit 1
+          fi

@@ -56,6 +56,9 @@
   --primary: var(--cat-1);
   --complete: var(--cat-5);
   --partial: var(--cat-3);
+  --cheaper: var(--cat-5);
+  --costlier: var(--cat-2);
+  --costliest: var(--cat-3);
 }
 
 * {
@@ -494,6 +497,25 @@ input:focus-visible,
   color: var(--partial);
 }
 
+/* How far a figure sits from the baseline it is stated against. Under the baseline is one colour,
+   and over it ramps to red with the share, so a column is read for where it is worst before any of
+   it is read for figures. The position on the ramp is the cell's own, the colours it runs between
+   being the palette's. */
+.delta.cheaper {
+  color: var(--cheaper);
+}
+
+.delta.costlier {
+  color: color-mix(in oklab, var(--costliest) calc(var(--delta-share, 0) * 100%), var(--costlier));
+}
+
+/* Under the magnitude it is a difference from rather than beside it, since the two read as one
+   figure and the magnitude is what the column is sorted and aligned on. */
+.delta-line {
+  display: block;
+  font-size: 12px;
+}
+
 /* Scroll container and the scrollport the header sticks to. A card too narrow to hold the table
    scrolls it sideways, which keeps the columns at the widths they were sized to instead of
    compressing them into each other or widening the page.
@@ -568,28 +590,6 @@ input:focus-visible,
    columns whose content the reader is here for. */
 .data-table td:has(> input[type='checkbox']) {
   width: 1px;
-}
-
-/* Outer edges run flush with the panel's own heading rather than carrying the gap that separates one
-   column from the next, which is width the column holding the names would otherwise lose twice. */
-/* A figure is inset less than text is, since the gap either side of a right aligned number is width
-   the column holding the names would otherwise be read without. */
-.data-table th.right,
-.data-table td.right {
-  padding-right: 6px;
-  padding-left: 6px;
-}
-
-/* The outer edges keep the inset every other cell carries, so the figures at either end of a row do
-   not sit against the panel's own border. */
-.data-table th:first-child,
-.data-table td:first-child {
-  padding-left: var(--cell-inset);
-}
-
-.data-table th:last-child,
-.data-table td:last-child {
-  padding-right: var(--cell-inset);
 }
 
 /* Every column is as wide as what it holds, which is what keeps the width the table does not need
@@ -899,6 +899,15 @@ const ratio = (value) => value.toFixed(2) + 'x';
 /* A share of a whole stated on the same row as that whole, so the two never have to be divided by
    eye. */
 const percent = (value) => (value * 100).toFixed(1) + '%';
+
+/* A difference is read against the figure it is a difference from, so it states which side of that
+   figure it falls on rather than leaving the reader to notice a minus sign. */
+const signed = (value, format) => (value < 0 ? '-' : '+') + format(Math.abs(value));
+
+/* The same magnitude to no decimals, which is how a difference stated under a figure reads, that
+   figure carrying the precision and the difference being read for the size of the gap. */
+const rounded = (format) => (value) =>
+  format(value).replace(/[\d.]+/, (figure) => Math.round(figure));
 
 /* The figure at a rank in a sorted run of them, taken at the nearest sample rather than interpolated,
    so every bound a filter states is a figure some block actually carries. */
@@ -1552,6 +1561,24 @@ const Filters = ({ filters, kept, total }) => html`
       <span class="filter-count">${kept} of ${total}</span>
       <${Pill} onClick=${filters.clear}>Clear<//>
     `}
+  <//>
+`;
+
+/* A question exactly one of the options answers, offered as one chip each. Pressing another answers
+   with it rather than alongside it, which is what tells this from the sets that hold every chip
+   pressed. */
+const ChoiceChips = ({ label, options, value, onChange }) => html`
+  <${ChipSet} label=${label}>
+    ${options.map(
+      (option) => html`
+        <${Chip}
+          key=${option.key}
+          pressed=${value === option.key}
+          onClick=${() => onChange(option.key)}>
+          ${option.label}
+        <//>
+      `
+    )}
   <//>
 `;
 
@@ -2484,6 +2511,38 @@ const BlocksCovered = ({ covered, size }) =>
     ? String(covered)
     : html`<span class=${covered === size ? 'complete' : 'partial'}>${covered} / ${size}</span>`;
 
+/* How far over the baseline a figure has to sit to be drawn at the far end of the ramp. Twice the
+   baseline is already the extreme a reader picks a comparison up to find, and saturating there keeps
+   one outlying block from flattening the colour of every other. */
+const DELTA_SATURATION = 1;
+
+/* How far a figure sits from the baseline, as the share of it that difference is. The colours are
+   the stylesheet's, so only where the share lands between them is stated here. */
+const Difference = ({ share, line, children }) => html`
+  <span
+    class=${['delta', share < 0 ? 'cheaper' : 'costlier', line && 'delta-line']
+      .filter(Boolean)
+      .join(' ')}
+    style=${share > 0 ? '--delta-share:' + Math.min(1, share / DELTA_SATURATION) : null}>
+    ${children}
+  </span>
+`;
+
+/* A figure against the baseline the reader is reading the comparison against, which is the magnitude
+   on one line and the difference on the next, stated both in the unit it was profiled in and as the
+   share of the baseline it comes to. The baseline itself, and any run level with it, carries the
+   magnitude alone, there being no difference to state. */
+function Delta({ value, baseline, format }) {
+  if (baseline == null || value === baseline) return format(value);
+  const share = (value - baseline) / baseline;
+  return html`
+    ${format(value)}
+    <${Difference} share=${share} line>
+      ${signed(value - baseline, rounded(format)) + ' (' + signed(share, percent) + ')'}
+    <//>
+  `;
+}
+
 /*
  * Every column a run is listed in, keyed on the run's index entry and reading its figures out of
  * `figures` when they are in. A page takes the ones it does not already state elsewhere.
@@ -2785,21 +2844,23 @@ function sharedTokens(cases) {
   return shared;
 }
 
-/* What a synthetic corpus's blocks may be broken up by, which is the test a case belongs to under
-   where its file sits, once the segments every block shares are taken off. A corpus taken off the
-   chain is one flat run of blocks and offers nothing to break it up by. */
-function blockGroups(names) {
-  const path = (name) => name.split('::')[0];
+/* Where a synthetic corpus's cases sit, which is the file holding them, taken from the segment the
+   names stop agreeing on, and the test within that file. A corpus taken off the chain is one flat
+   run of blocks and sits under neither. */
+function blockCategories(names) {
   const synthetic = names.filter((name) => !fromChain(name));
-  if (!synthetic.length) return [];
+  if (!synthetic.length) return null;
+  const path = (name) => name.split('::')[0];
   const depth = commonDepth(synthetic.map(path));
-  return [
-    {
-      label: 'Test',
-      of: (name) =>
-        [...path(name).split('/').slice(depth), testName(name)].filter(Boolean).join(' / '),
-    },
-  ];
+  const file = (name) => path(name).split('/').slice(depth).filter(Boolean).join(' / ');
+  return { file, test: (name) => [file(name), testName(name)].filter(Boolean).join(' / ') };
+}
+
+/* A listing of blocks is broken up by the test alone, the file it sits in being what tells one
+   family of tests from another and reading as part of the test's own name. */
+function blockGroups(names) {
+  const categories = blockCategories(names);
+  return categories ? [{ label: 'Test', of: categories.test }] : [];
 }
 
 /*
@@ -2838,8 +2899,9 @@ const BLOCK_ORDER = { key: 'name', direction: 'ascending' };
  * Every block a run or a corpus holds, one row each, filterable by name and broken up by the layers
  * a synthetic corpus's test names carry, which the panel folds and unfolds whole. `columns` are what
  * the caller measures a block by, which a corpus listed on its own has none of. The panel takes a
- * `title`, since a run lists the blocks it got through and the ones it did not the same way, and a
- * `control` the caller states its own choice with, which stands beside the panel's own.
+ * `title`, since a run lists the blocks it got through and the ones it did not the same way, a
+ * `control` the caller states its own choice with, which stands beside the panel's own, and
+ * `choices`, which are the caller's own questions asked on the row the panel asks its own on.
  */
 function BlocksPanel({
   names,
@@ -2848,6 +2910,7 @@ function BlocksPanel({
   filters = NOTHING,
   title = 'Blocks',
   control,
+  choices,
 }) {
   const [filter, setFilter] = useState('');
   const settling = useRef(0);
@@ -2907,8 +2970,9 @@ function BlocksPanel({
 
   return html`
     <${Card} title=${title} control=${panelControls}>
-      ${(layers.length > 0 || narrowing.offered.length > 0) &&
+      ${(choices || layers.length > 0 || narrowing.offered.length > 0) &&
       html`<div class="chip-sets">
+        ${choices}
         ${layers.length > 0 &&
         html`<${GroupChips}
           groups=${layers}
@@ -2966,6 +3030,14 @@ const byGuest = (left, right) =>
   left.stateless_validator.localeCompare(right.stateless_validator) ||
   left.stateless_validator_version.localeCompare(right.stateless_validator_version);
 
+/* What a run is called wherever a set of them is drawn together, which is the guest it profiled. A
+   version tells two runs of one stateless validator apart, so it is stated only where one name
+   stands for more than one of the runs shown. */
+const runLabels = (entries) => (entry) =>
+  entries.filter((other) => other.stateless_validator === entry.stateless_validator).length > 1
+    ? entry.stateless_validator + ' ' + entry.stateless_validator_version
+    : entry.stateless_validator;
+
 /*
  * The charts a set of runs is drawn as, which is what a comparison and a single run both show below
  * their own heading. `shares` opens the composition as the share each kind takes of the total, which
@@ -2976,12 +3048,7 @@ function CostPanels({ rows, fixtures, shares }) {
   const notes = useMemo(() => rows[0].entry.composition.map((kind) => kind.note), [rows]);
   const colors = guestColors(rows.map((row) => row.entry.stateless_validator));
 
-  /* A version tells two runs of one stateless validator apart, so it is stated only where one name
-     stands for more than one run. */
-  const label = (entry) =>
-    rows.filter((row) => row.entry.stateless_validator === entry.stateless_validator).length > 1
-      ? entry.stateless_validator + ' ' + entry.stateless_validator_version
-      : entry.stateless_validator;
+  const label = runLabels(rows.map((row) => row.entry));
 
   /* Runs of one stateless validator carry that validator's colour, so all but the first of the ones
      a chart actually draws are told apart by their dash pattern. */
@@ -3033,6 +3100,225 @@ function CostPanels({ rows, fixtures, shares }) {
       title="Peak heap against gas usage"
       series=${heap}
       scale=${HEAP_SCALE} />`}
+  `;
+}
+
+/* The two panels a comparison reads block by block rather than over the corpus as a whole, and what
+   both of them ask the reader before drawing. */
+
+/* The figures a block carries, either of which a comparison of them is read by. */
+const BLOCK_VALUES = [
+  { key: 'cost', label: 'Cost', of: (block) => block.cost.total, format: si },
+  { key: 'heap', label: 'Peak heap', of: (block) => block.peak_heap_bytes ?? null, format: bytes },
+];
+
+/* What a comparison states its figures against, beyond the runs themselves. A run fixes the baseline
+   down the whole listing, while an extreme takes it from each row, so a block is stated against
+   whichever run reached it there, which is what shows the runs wherever they are furthest apart. */
+const BASELINE_EXTREMES = [
+  { key: 'lowest', label: 'Lowest', of: (figures) => Math.min(...figures) },
+  { key: 'highest', label: 'Highest', of: (figures) => Math.max(...figures) },
+];
+
+/* Whichever of the figures the runs actually recorded, since a backend that reads no heap leaves
+   nothing to compare and the question is then not worth asking. */
+const valuesRecorded = (rows, fixtures) =>
+  BLOCK_VALUES.filter((option) =>
+    rows.some((row) => fixtures.some((name) => option.of(row.run.profile[name]) != null))
+  );
+
+/* The one baseline control, asked by every panel that states runs against one of them. */
+const BaselineChips = ({ rows, label, extremes = NOTHING, value, onChange }) => html`
+  <${ChoiceChips}
+    label="Baseline"
+    options=${[
+      ...extremes,
+      ...rows.map((row) => ({ key: row.entry.runId, label: label(row.entry) })),
+    ]}
+    value=${value}
+    onChange=${onChange} />
+`;
+
+/*
+ * Every block the runs share, one row each, carrying what each of them spent on it against the
+ * baseline the reader picked. It is the listing a run's own page draws, so a block is searched for,
+ * broken up and folded here exactly as it is there.
+ */
+function CompareBlocksPanel({ rows, fixtures }) {
+  const [baseline, setBaseline] = useState(BASELINE_EXTREMES[0].key);
+  const [value, setValue] = useState(BLOCK_VALUES[0].key);
+  const label = runLabels(rows.map((row) => row.entry));
+
+  const values = useMemo(() => valuesRecorded(rows, fixtures), [rows, fixtures]);
+  const chosen = values.find((option) => option.key === value) ?? values[0];
+
+  /* Taken once per block rather than once per cell, every cell in a row being read against the same
+     one. */
+  const baselines = useMemo(() => {
+    const extreme = BASELINE_EXTREMES.find((option) => option.key === baseline);
+    const held = rows.find((row) => row.entry.runId === baseline);
+    return new Map(
+      fixtures.map((name) => {
+        if (!extreme) return [name, held ? chosen.of(held.run.profile[name]) : null];
+        const figures = rows
+          .map((row) => chosen.of(row.run.profile[name]))
+          .filter((figure) => figure != null);
+        return [name, figures.length ? extreme.of(figures) : null];
+      })
+    );
+  }, [rows, fixtures, baseline, chosen]);
+
+  return html`
+    <${BlocksPanel}
+      names=${fixtures}
+      metadata=${(name) => rows[0].run.profile[name].metadata}
+      choices=${html`
+        <${BaselineChips}
+          rows=${rows}
+          label=${label}
+          extremes=${BASELINE_EXTREMES}
+          value=${baseline}
+          onChange=${setBaseline} />
+        ${values.length > 1 &&
+        html`<${ChoiceChips}
+          label="Value"
+          options=${values}
+          value=${chosen.key}
+          onChange=${setValue} />`}
+      `}
+      columns=${rows.map((row) =>
+        figureColumn(
+          'run:' + row.entry.runId,
+          label(row.entry),
+          (name) => chosen.of(row.run.profile[name]),
+          (figure, name) =>
+            html`<${Delta}
+              value=${figure}
+              baseline=${baselines.get(name)}
+              format=${chosen.format} />`
+        )
+      )} />
+  `;
+}
+
+/* Heads the column stating how far a run sits from the baseline, which is the same figure the
+   listing of blocks prints beside each magnitude. */
+const DELTA = '\u0394';
+
+/* What a synthetic corpus's blocks are gathered by, one of them rather than both, a test sitting
+   under the file that holds it. */
+const CATEGORY_LAYERS = [
+  { key: 'file', label: 'File' },
+  { key: 'test', label: 'Test' },
+];
+
+/*
+ * The blocks of a synthetic corpus gathered by the file their tests sit in or by the test itself,
+ * carrying what each run spent over the group and how far every other run sits from the baseline.
+ *
+ * The mean rather than the sum, since groups hold different numbers of blocks and only the mean
+ * reads across them, and the share of the baseline a difference comes to is the same figure either
+ * way.
+ */
+function CategoriesPanel({ rows, fixtures, categories }) {
+  const [grouping, setGrouping] = useState(CATEGORY_LAYERS[0].key);
+  const [baseline, setBaseline] = useState(rows[0].entry.runId);
+  const [value, setValue] = useState(BLOCK_VALUES[0].key);
+  const label = runLabels(rows.map((row) => row.entry));
+
+  const values = useMemo(() => valuesRecorded(rows, fixtures), [rows, fixtures]);
+  const chosen = values.find((option) => option.key === value) ?? values[0];
+
+  const groups = useMemo(() => {
+    const of = categories[grouping];
+    const held = new Map();
+    for (const name of fixtures) {
+      const key = of(name);
+      if (!held.has(key)) held.set(key, []);
+      held.get(key).push(name);
+    }
+    return [...held.entries()].map(([name, names]) => ({ name, names }));
+  }, [fixtures, categories, grouping]);
+
+  const means = useMemo(() => {
+    const mean = (run, names) => {
+      const figures = names
+        .map((name) => chosen.of(run.profile[name]))
+        .filter((figure) => figure != null);
+      return figures.length
+        ? figures.reduce((sum, figure) => sum + figure, 0) / figures.length
+        : null;
+    };
+    return new Map(
+      groups.map((group) => [
+        group.name,
+        new Map(rows.map((row) => [row.entry.runId, mean(row.run, group.names)])),
+      ])
+    );
+  }, [groups, rows, chosen]);
+
+  const meanOf = (group, runId) => means.get(group.name).get(runId);
+  const shareOf = (group, runId) => {
+    const against = meanOf(group, baseline);
+    const own = meanOf(group, runId);
+    return against == null || own == null ? null : (own - against) / against;
+  };
+
+  const layer = CATEGORY_LAYERS.find((option) => option.key === grouping);
+
+  return html`
+    <${Card} title="Categories">
+      <div class="chip-sets">
+        <${ChoiceChips}
+          label="Group by"
+          options=${CATEGORY_LAYERS}
+          value=${grouping}
+          onChange=${setGrouping} />
+        <${BaselineChips} rows=${rows} label=${label} value=${baseline} onChange=${setBaseline} />
+        ${values.length > 1 &&
+        html`<${ChoiceChips}
+          label="Value"
+          options=${values}
+          value=${chosen.key}
+          onChange=${setValue} />`}
+      </div>
+      <${DataTable}
+        columns=${[
+          {
+            ...column(
+              'group',
+              layer.label,
+              (group) => group.name,
+              (group) => html`<${Truncate} text=${group.name} />`
+            ),
+            fill: true,
+          },
+          figureColumn('blocks', 'Blocks', (group) => group.names.length, String),
+          ...rows.map((row) =>
+            figureColumn(
+              'run:' + row.entry.runId,
+              label(row.entry),
+              (group) => meanOf(group, row.entry.runId),
+              chosen.format
+            )
+          ),
+          // The baseline is what the rest are stated against and has no difference from itself to
+          // state, so it heads no column of its own here.
+          ...rows
+            .filter((row) => row.entry.runId !== baseline)
+            .map((row) =>
+              figureColumn(
+                'delta:' + row.entry.runId,
+                DELTA + ' ' + label(row.entry),
+                (group) => shareOf(group, row.entry.runId),
+                (share) => html`<${Difference} share=${share}>${signed(share, percent)}<//>`
+              )
+            ),
+        ]}
+        rows=${groups}
+        rowKey=${(group) => group.name}
+        initialSort=${{ key: 'group', direction: 'ascending' }} />
+    <//>
   `;
 }
 
@@ -3291,6 +3577,9 @@ function ComparePage({ ids }) {
     const runs = await Promise.all(entries.map((entry) => loadRun(entry)));
     return { entries, runs, fixtures: sharedFixtures(runs) };
   }, [ids.join(',')], ready);
+  /* The two listings below the charts are the bulk of the page's work and none of what a reader
+     landing on it looks at first, so the charts come up without waiting on them. */
+  const painted = usePainted();
   if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
   if (!state.value) return null;
   const { entries, runs, fixtures } = state.value;
@@ -3305,8 +3594,15 @@ function ComparePage({ ids }) {
     }
     // entries and runs are parallel, an index entry beside the profile it names.
     const rows = entries
-      .map((entry, index) => ({ entry, statistics: statistics(runs[index], fixtures) }))
+      .map((entry, index) => ({
+        entry,
+        run: runs[index],
+        statistics: statistics(runs[index], fixtures),
+      }))
       .sort((left, right) => byGuest(left.entry, right.entry));
+    /* A corpus taken off the chain names its blocks after the tool that pulled them and a hash, so
+       it holds no file or test to gather them under and the panel that would is dropped. */
+    const categories = blockCategories(fixtures);
     const heaps = rows.map((row) => row.statistics.peakHeapMean).filter((peak) => peak != null);
     /* A lone run has nothing to be stated against, and a ratio of one against itself says less than
        the magnitude alone. */
@@ -3336,6 +3632,10 @@ function ComparePage({ ids }) {
           rowKey=${(entry) => entry.runId} />
       <//>
       <${CostPanels} rows=${rows} fixtures=${fixtures} />
+      ${painted &&
+      categories &&
+      html`<${CategoriesPanel} rows=${rows} fixtures=${fixtures} categories=${categories} />`}
+      ${painted && html`<${CompareBlocksPanel} rows=${rows} fixtures=${fixtures} />`}
     `;
   };
 

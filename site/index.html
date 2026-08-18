@@ -2619,13 +2619,14 @@ function LineChartPanel({ title, series, scale }) {
    what is fitted here is a proving time read off a cost and what is stated is what the fit is
    worth. */
 
-/* How a proving time is read off a cost. Least squares takes the line closest to the times, which is
-   the best a fixed rate and a fixed overhead can do. The proportional fit drops the overhead and
-   holds the line to the origin, which is the shape a cost ratio is read as whenever one is quoted as
-   a proving time ratio, so how far the two part company is what quoting it that way costs. */
+/* How a proving time is read off a cost, both models being the line closest to the times and
+   differing in what a gap is measured in. Relative least squares measures it in shares of the
+   block's own time, which is the reading the page states an error in and the one a prediction of a
+   single block is judged by. Least squares measures it in milliseconds, which weights a block by how
+   long it runs and so answers what a batch of them comes to rather than what one of them does. */
 const PROVING_MODELS = [
+  { key: 'relative-least-squares', label: 'Relative least squares', of: relativeSquares },
   { key: 'least-squares', label: 'Least squares', of: leastSquares },
-  { key: 'proportional', label: 'Proportional', of: proportional },
 ];
 
 /* A point is [cost, proving time, block number, name, gas]. The first two are what a fit is taken
@@ -2646,12 +2647,34 @@ function leastSquares(points) {
   return { slope, intercept: meanTime - slope * meanCost };
 }
 
-/* The same held to the origin, so a block of no cost is proved in no time and the rate is all the
-   line carries. */
-function proportional(points) {
-  const squares = points.reduce((sum, point) => sum + point[0] ** 2, 0);
-  const products = points.reduce((sum, point) => sum + point[0] * point[1], 0);
-  return { slope: squares === 0 ? 0 : products / squares, intercept: 0 };
+/*
+ * The line closest to the times read as shares of themselves, each residual being divided by the
+ * block's own measured time before it is squared.
+ *
+ * A gap in milliseconds counts for what the block is long enough to make it, so a corpus whose
+ * blocks run from under a second to several minutes is fitted by its longest blocks alone. Over the
+ * EEST corpus the seven blocks past 900G carry enough of the squared gap between them to pull the
+ * intercept below zero, which then predicts a negative time for a quarter of the corpus. Dividing
+ * the gap by the time it is a gap in gives every block one voice, which is the reading the page
+ * states its error in and the one a block is drawn against.
+ *
+ * The normal equations are those of least squares over a design divided through by the times, so a
+ * corpus of one cost leaves them singular and the times alone say what the line is.
+ */
+function relativeSquares(points) {
+  const rates = points.map((point) => point[0] / point[1]);
+  const inverses = points.map((point) => 1 / point[1]);
+  const sum = (values) => values.reduce((total, value) => total + value, 0);
+  const rateSquares = sum(rates.map((rate) => rate * rate));
+  const inverseSquares = sum(inverses.map((inverse) => inverse * inverse));
+  const products = sum(rates.map((rate, at) => rate * inverses[at]));
+  const [rateTotal, inverseTotal] = [sum(rates), sum(inverses)];
+  const determinant = rateSquares * inverseSquares - products * products;
+  if (determinant === 0) return { slope: 0, intercept: inverseTotal / inverseSquares };
+  return {
+    slope: (rateTotal * inverseSquares - inverseTotal * products) / determinant,
+    intercept: (inverseTotal * rateSquares - rateTotal * products) / determinant,
+  };
 }
 
 /* How far a block sits from the fit, as the share of its own measured time that gap comes to, taken
@@ -2675,9 +2698,10 @@ const rate = (slope) => ((slope * COST_UNIT) / 1000).toFixed(3) + ' s/G';
 const ERROR_RANKS = [90, 95, 99];
 
 /* What a fit is worth over the blocks it was taken on, which is the share of the spread in the
-   measured times it accounts for and the deviation it leaves at each of those ranks. A fit through
-   the origin is free to account for less of that spread than the mean does, which is what a negative
-   share reports. */
+   measured times it accounts for and the deviation it leaves at each of those ranks. The share is
+   taken in milliseconds whichever model drew the line, so a relative fit, which does not set out to
+   minimise a gap in milliseconds, is free to account for less of that spread than the mean does,
+   which is what a negative share reports. */
 function fitted(points, fit) {
   const predicted = (point) => fit.intercept + fit.slope * point[0];
   const meanTime = points.reduce((sum, point) => sum + point[1], 0) / points.length;
@@ -2739,8 +2763,8 @@ function ProvingChart({ points, fit }) {
       legend: { show: false },
       grid: { left: 24, right: 72, top: 16, bottom: 76, containLabel: true },
       // The window the cost axis opens on is left to dataZoom, which drives it, and runs from zero
-      // so a fit is read against the origin the proportional model is held to rather than against
-      // the cheapest block measured.
+      // so the intercept a fit carries is read where the axis states it rather than off the cheapest
+      // block measured.
       xAxis: {
         ...AXIS,
         type: 'value',

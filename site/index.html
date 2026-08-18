@@ -59,6 +59,13 @@
   --cheaper: var(--cat-5);
   --costlier: var(--cat-2);
   --costliest: var(--cat-3);
+  /* Ends of the scale a proving time is read against its own fit on. They are their own pair rather
+     than the cost ones above, since the cool end has to stand apart from the muted middle a block
+     sitting on the fit takes, which the cost scale's own cool end does not. The cool end is a blue
+     of the categorical set's own lightness rather than one of its hues, neither end naming a series
+     and the two having to read as opposite directions of one measure. */
+  --faster: #4f88b8;
+  --slower: var(--cat-3);
 }
 
 * {
@@ -232,7 +239,7 @@ input:focus-visible,
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 16px;
+  padding: 24px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -287,6 +294,12 @@ input:focus-visible,
   font-size: 12px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* A superscript raises the line box it sits in, which would drop the value under it out of line with
+   the values beside it. */
+.field-label sup {
+  line-height: 0;
 }
 
 .field-value {
@@ -497,6 +510,12 @@ input:focus-visible,
   color: var(--partial);
 }
 
+/* A count of nothing, which is a figure a column states rather than an absence it dashes, held back
+   from the counts beside it that a reader is there to compare. */
+.zero {
+  color: var(--faint);
+}
+
 /* How far a figure sits from the baseline it is stated against. Under the baseline is one colour,
    and over it ramps to red with the share, so a column is read for where it is worst before any of
    it is read for figures. The position on the ramp is the cell's own, the colours it runs between
@@ -507,6 +526,24 @@ input:focus-visible,
 
 .delta.costlier {
   color: color-mix(in oklab, var(--costliest) calc(var(--delta-share, 0) * 100%), var(--costlier));
+}
+
+/* How far a block ran from the fit, ramped out of the muted middle a block sitting on the fit takes
+   to the end of the scale the chart saturates at, so a row and the point it stands for read alike. */
+.deviation {
+  color: color-mix(
+    in oklab,
+    var(--deviation-end) calc(var(--deviation-share, 0) * 100%),
+    var(--muted)
+  );
+}
+
+.deviation.faster {
+  --deviation-end: var(--faster);
+}
+
+.deviation.slower {
+  --deviation-end: var(--slower);
 }
 
 /* Under the magnitude it is a difference from rather than beside it, since the two read as one
@@ -893,6 +930,32 @@ function bytes(value) {
   return value.toFixed(0) + ' B';
 }
 
+/* Proving times arrive in milliseconds and are read in seconds throughout, however long or short the
+   run holding them, so two of them are compared as they are read rather than through a unit that
+   changes under the reader. */
+const duration = (value) => (value / 1000).toFixed(2) + ' s';
+
+/* Whole seconds, which is how a duration axis is marked however long the run it holds, so its marks
+   neither change unit partway up nor carry a precision the reader is not comparing at. */
+const secondTick = (value) => Math.round(value / 1000) + ' s';
+
+/* Seconds a duration axis marks at, so a mark never lands inside a second and two never print the
+   same label. */
+const SECOND_STEPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600];
+
+/* The most marks a duration axis is split into, which is what fixes the step it takes. */
+const AXIS_MARKS = 8;
+
+/* The ceiling and the interval a duration axis carries, taken so that both land on a whole second
+   and the topmost mark is the ceiling itself. */
+function secondSpan(milliseconds) {
+  const seconds =
+    SECOND_STEPS.find((step) => milliseconds <= step * AXIS_MARKS * 1000) ??
+    Math.ceil(milliseconds / (AXIS_MARKS * 1000));
+  const interval = seconds * 1000;
+  return { interval, max: Math.ceil(milliseconds / interval) * interval };
+}
+
 /* Two decimals wherever a figure is stated against the smallest of the runs shown. */
 const ratio = (value) => value.toFixed(2) + 'x';
 
@@ -1042,6 +1105,25 @@ function loadRun(entry) {
     profiles.set(path, pending);
   }
   return profiles.get(path);
+}
+
+/* Where a proving time dataset sits, which is the run it was proved over and the name of the machine
+   that proved it. The directory is the run's own path, so a corpus's times are read against that
+   corpus's costs and against nothing else. */
+const provingPath = (run, file) =>
+  [run.stateless_validator, run.elf_sha256.slice(0, 16), run.suite, file].join('/');
+
+/* Keyed the same way the profiles are, so a dataset is fetched once for the session however many
+   runs of the ELF it was proved from are opened. */
+const provingRuns = new Map();
+
+function loadProving(entry, file) {
+  const path = provingPath(entry, file);
+  if (!provingRuns.has(path)) {
+    const missing = 'No proving times published at ' + path;
+    provingRuns.set(path, json('profiles/' + path + '.json', missing));
+  }
+  return provingRuns.get(path);
 }
 
 function sharedFixtures(runs) {
@@ -1400,15 +1482,21 @@ const RANGE = {
   covers: (answer, domain) => answer[0] <= domain[0] && answer[1] >= domain[domain.length - 1],
   matches: (answer, value) => value != null && value >= answer[0] && value <= answer[1],
   /* The tail past a percentile, taken at the rank in the rows rather than in the figures so that it
-     names the share of them it says. One tail replaces another, there being one bound to set. */
-  tail: (from, { values, domain }) => [quantile(values, from / 100), domain[domain.length - 1]],
+     names the share of them it says. A rank stated negative is the tail at the other end, which is
+     what reaches the rows a signed figure runs furthest below zero on. One tail replaces another,
+     there being one bound to set. */
+  tail: (from, { values, domain }) =>
+    from < 0
+      ? [domain[0], quantile(values, 1 + from / 100)]
+      : [quantile(values, from / 100), domain[domain.length - 1]],
   presetPressed: (from, scale, held) => {
     const [low, high] = RANGE.tail(from, scale);
     return held != null && held[0] === low && held[1] === high;
   },
   presetAnswer: (from, scale, held, pressed) =>
     pressed ? RANGE.whole(scale.domain) : RANGE.tail(from, scale),
-  presetLabel: (from, dimension) => 'P' + from + ' ' + dimension.label,
+  presetLabel: (from, dimension) =>
+    'P' + Math.abs(from) + ' ' + (from < 0 ? '-' : '') + dimension.label,
 };
 
 const CHOICE = {
@@ -1965,6 +2053,8 @@ const THEME = {
   faint: token('--faint'),
   border: token('--border'),
   primary: token('--primary'),
+  faster: token('--faster'),
+  slower: token('--slower'),
 };
 
 /* Slot order rather than 1..8, since adjacent kinds have to stay apart under colour-blind
@@ -2308,15 +2398,27 @@ function orderedPoints(series, mode) {
   );
 }
 
-/* A fixture pulled off the chain is identified by its block number and the gas it used, while a
-   synthetic one carries what it exercises in its own name, which the number and the gas say nothing
-   about, so the name alone heads the tooltip. */
-const fixtureHead = (point) =>
-  fromChain(point[3])
-    ? 'Block #' + escaped(point[2]) + ' - ' + escaped(si(point[4])) + ' gas'
-    : '<div style="max-width:420px;white-space:normal;word-break:break-all">' +
-      escaped(point[3]) +
-      '</div>';
+/*
+ * How a chart heads a tooltip, taken over every fixture it draws.
+ *
+ * A fixture pulled off the chain is identified by its block number, while a synthetic one carries
+ * what it exercises in its own name, and both are read against the gas they used. A synthetic name
+ * is stated the way the block listings state it, as where the test sits followed by the parameters
+ * that are the case's own, since the path segments and the parameters every fixture shares tell one
+ * fixture from another nothing and only crowd out what does.
+ */
+function fixtureHeads(names) {
+  const categories = blockCategories(names);
+  const label = blockLabels(names);
+  return (point) => {
+    const gas = escaped(si(point[4])) + ' gas';
+    const name = label(point[3], { block_number: point[2] }, categories?.test.of);
+    const head = escaped(name) + ' - ' + gas;
+    return fromChain(point[3])
+      ? head
+      : '<div style="max-width:520px;white-space:normal;word-break:break-word">' + head + '</div>';
+  };
+}
 
 /* Fraction of the fixtures that have to sit at gas positions of their own for the gas order to be
    the one a chart opens in. */
@@ -2360,6 +2462,7 @@ function LineChartPanel({ title, series, scale }) {
     const points = series.flatMap((line) => line.points);
     const ceiling = scale.ceiling(points.reduce((max, point) => Math.max(max, point[1]), 0));
     const opened = orderedPoints(series, opening(series));
+    const head = fixtureHeads(points.map(fixtureName));
     /*
      * The value axis is pinned to the whole corpus and animation is off, so hiding a run or zooming
      * never rescales or slides what is left. The gas axis stays unpinned because dataZoom drives it.
@@ -2445,7 +2548,7 @@ function LineChartPanel({ title, series, scale }) {
             marker(candidate.color) + escaped(candidate.seriesName),
             figure(candidate.value[1]),
           ]);
-          return tooltipTable(fixtureHead(point), rows);
+          return tooltipTable(head(point), rows);
         },
       },
       // A point per fixture, so markers stay hidden until the axis pointer picks one out.
@@ -2484,6 +2587,247 @@ function LineChartPanel({ title, series, scale }) {
   `;
 }
 
+/* Proving times against the cost the same blocks were priced at. A cost is quoted as a stand-in for
+   a proving time, and only a measurement of both over one set of blocks says how far that holds, so
+   what is fitted here is a proving time read off a cost and what is stated is what the fit is
+   worth. */
+
+/* How a proving time is read off a cost. Least squares takes the line closest to the times, which is
+   the best a fixed rate and a fixed overhead can do. The proportional fit drops the overhead and
+   holds the line to the origin, which is the shape a cost ratio is read as whenever one is quoted as
+   a proving time ratio, so how far the two part company is what quoting it that way costs. */
+const PROVING_MODELS = [
+  { key: 'least-squares', label: 'Least squares', of: leastSquares },
+  { key: 'proportional', label: 'Proportional', of: proportional },
+];
+
+/* A point is [cost, proving time, block number, name, gas]. The first two are what a fit is taken
+   over and the rest are what the tooltip reads, which is the shape the line charts hold a point in
+   too. */
+
+/* The line closest to the times, taken over the costs a corpus of one block leaves no spread in, in
+   which case the mean is the whole of what the times say. */
+function leastSquares(points) {
+  const mean = (at) => points.reduce((sum, point) => sum + point[at], 0) / points.length;
+  const [meanCost, meanTime] = [mean(0), mean(1)];
+  const spread = points.reduce((sum, point) => sum + (point[0] - meanCost) ** 2, 0);
+  const covariance = points.reduce(
+    (sum, point) => sum + (point[0] - meanCost) * (point[1] - meanTime),
+    0
+  );
+  const slope = spread === 0 ? 0 : covariance / spread;
+  return { slope, intercept: meanTime - slope * meanCost };
+}
+
+/* The same held to the origin, so a block of no cost is proved in no time and the rate is all the
+   line carries. */
+function proportional(points) {
+  const squares = points.reduce((sum, point) => sum + point[0] ** 2, 0);
+  const products = points.reduce((sum, point) => sum + point[0] * point[1], 0);
+  return { slope: squares === 0 ? 0 : products / squares, intercept: 0 };
+}
+
+/* How far a block sits from the fit, as the share of its own measured time that gap comes to, taken
+   against the measurement rather than against the prediction. A fit whose intercept is negative
+   predicts a time below zero for the cheapest blocks of a corpus that spans orders of magnitude, and
+   a share of that says nothing, while a measured time is always a real one. Positive is slower than
+   the fit, which is the end the points warm towards. */
+const deviation = (measured, predicted) => (measured - predicted) / measured;
+
+/* Cost the fit's slope is stated per. A block runs to tens of billions, so the time one unit of cost
+   costs is a figure of leading zeros while the time a billion of it costs reads at a glance. */
+const COST_UNIT = 1e9;
+
+/* The slope, as the seconds a billion of cost takes rather than the milliseconds one unit of it
+   does. */
+const rate = (slope) => ((slope * COST_UNIT) / 1000).toFixed(3) + ' s/G';
+
+/* Ranks the tail of deviations is read at, stated as percentiles. Three of them rather than one,
+   since where a fit starts to fail is what tells a run whose blocks all sit near it from one carrying
+   a tail of blocks it cannot predict at all. */
+const ERROR_RANKS = [90, 95, 99];
+
+/* What a fit is worth over the blocks it was taken on, which is the share of the spread in the
+   measured times it accounts for and the deviation it leaves at each of those ranks. A fit through
+   the origin is free to account for less of that spread than the mean does, which is what a negative
+   share reports. */
+function fitted(points, fit) {
+  const predicted = (point) => fit.intercept + fit.slope * point[0];
+  const meanTime = points.reduce((sum, point) => sum + point[1], 0) / points.length;
+  const spread = points.reduce((sum, point) => sum + (point[1] - meanTime) ** 2, 0);
+  const residual = points.reduce((sum, point) => sum + (point[1] - predicted(point)) ** 2, 0);
+  const deviations = points
+    .map((point) => Math.abs(deviation(point[1], predicted(point))))
+    .sort((left, right) => left - right);
+  return {
+    ...fit,
+    predicted,
+    determination: spread === 0 ? 0 : 1 - residual / spread,
+    errors: ERROR_RANKS.map((rank) => quantile(deviations, rank / 100)),
+  };
+}
+
+/* The costs the blocks actually reached, which is as far as the fitted line is drawn, since a line
+   drawn past them states the fit where nothing was measured. */
+function fitEnds(points, fit) {
+  const costs = points.map((point) => point[0]);
+  return [Math.min(...costs), Math.max(...costs)].map((cost) => [
+    cost,
+    fit.intercept + fit.slope * cost,
+  ]);
+}
+
+/* Where the colour scale saturates, in share of a block's measured time. A corpus spanning orders of
+   magnitude leaves a handful of blocks whole multiples off the fit, and letting those set the ends of
+   the scale would wash every block near the line into one shade. */
+const DEVIATION_CLAMP = 0.5;
+
+/*
+ * One point per block against a fitted line, the value axis holding a duration rather than a
+ * magnitude and the gas axis a cost, so neither axis is the one the other charts carry.
+ *
+ * A point takes its colour from how far it sits from the fit rather than from the guest, which the
+ * run above already names, so a block that proves slower than its cost predicts stands out from the
+ * run without being looked up. The fit itself is drawn as a dashed neutral line, having no reading
+ * of its own to carry a colour.
+ */
+function ProvingChart({ points, fit }) {
+  const { host, chart } = useChart();
+
+  useEffect(() => {
+    const span = secondSpan(points.reduce((max, point) => Math.max(max, point[1]), 0));
+    const highest = points.reduce((max, point) => Math.max(max, point[0]), 0);
+    // The deviation rides along as a sixth dimension, which is what the colour scale reads and what
+    // the tooltip states, so the two can never disagree.
+    const plotted = points.map((point) => [
+      ...point,
+      deviation(point[1], fit.predicted(point)),
+    ]);
+    const head = fixtureHeads(points.map(fixtureName));
+    chart.current.setOption({
+      ...BASE_OPTION,
+      animation: false,
+      // The guest is named above the chart and the fit by the model chip, so the legend would only
+      // repeat them and the room it takes goes to the colour scale instead.
+      legend: { show: false },
+      grid: { left: 24, right: 72, top: 16, bottom: 76, containLabel: true },
+      // The window the cost axis opens on is left to dataZoom, which drives it, and runs from zero
+      // so a fit is read against the origin the proportional model is held to rather than against
+      // the cheapest block measured.
+      xAxis: {
+        ...AXIS,
+        type: 'value',
+        axisLabel: { ...AXIS.axisLabel, formatter: gasTick },
+      },
+      yAxis: {
+        ...AXIS,
+        type: 'value',
+        min: 0,
+        max: span.max,
+        interval: span.interval,
+        axisLabel: { ...AXIS.axisLabel, formatter: secondTick },
+      },
+      // The cost axis is read at whatever span the reader picks, as the charts above it are, and
+      // filterMode none keeps the points outside the window so the fitted line still draws across
+      // both edges.
+      dataZoom: [
+        {
+          type: 'inside',
+          filterMode: 'none',
+          minSpan: 1,
+          startValue: 0,
+          endValue: highest,
+          zoomOnMouseWheel: true,
+          moveOnMouseMove: false,
+          throttle: ZOOM_THROTTLE,
+        },
+        {
+          type: 'slider',
+          filterMode: 'none',
+          minSpan: 1,
+          startValue: 0,
+          endValue: highest,
+          throttle: ZOOM_THROTTLE,
+          height: 30,
+          bottom: 24,
+          labelFormatter: gasTick,
+          borderColor: THEME.border,
+          backgroundColor: 'transparent',
+          fillerColor: hexAlpha(THEME.primary, 0.18),
+          handleStyle: { color: THEME.primary, borderColor: THEME.primary },
+          moveHandleStyle: { color: THEME.primary },
+          textStyle: { color: THEME.muted, fontSize: 10 },
+          dataBackground: {
+            lineStyle: { color: THEME.border, opacity: 0.5 },
+            areaStyle: { color: THEME.border, opacity: 0.08 },
+          },
+          selectedDataBackground: {
+            lineStyle: { color: THEME.primary, opacity: 0.6 },
+            areaStyle: { color: THEME.primary, opacity: 0.08 },
+          },
+        },
+      ],
+      // Cool below the fit, muted on it and warm above, so a block that proved slower than its cost
+      // predicts reads warm and one that beat its cost reads cool.
+      visualMap: {
+        seriesIndex: 0,
+        dimension: 5,
+        min: -DEVIATION_CLAMP,
+        max: DEVIATION_CLAMP,
+        calculable: true,
+        orient: 'vertical',
+        right: 0,
+        top: 'middle',
+        itemWidth: 12,
+        itemHeight: 60,
+        precision: 2,
+        text: [
+          '+' + DEVIATION_CLAMP * 100 + '% slower',
+          '-' + DEVIATION_CLAMP * 100 + '% faster',
+        ],
+        textStyle: { color: THEME.muted, fontSize: 10 },
+        inRange: { color: [THEME.faster, THEME.muted, THEME.slower] },
+      },
+      tooltip: {
+        ...BASE_OPTION.tooltip,
+        trigger: 'item',
+        formatter: ({ value }) => {
+          const predicted = fit.predicted(value);
+          return tooltipTable(head(value), [
+            ['Cost', si(value[0])],
+            ['Time', duration(value[1])],
+            ['Fitted', duration(predicted)],
+            // Against the fit rather than against the measurement, so the figure states how far the
+            // fit itself is off. Positive is a block that ran over what the fit gave it.
+            ['Error', signed((value[1] - predicted) / predicted, percent)],
+          ]);
+        },
+      },
+      series: [
+        {
+          type: 'scatter',
+          symbolSize: 6,
+          // No large mode, which draws every point of a series in one colour and would drop the
+          // colour scale along with it.
+          itemStyle: { opacity: 0.8 },
+          data: plotted,
+        },
+        {
+          type: 'line',
+          // The line states the fit rather than a block, so it raises no tooltip of its own and
+          // leaves the pointer to the points under it.
+          silent: true,
+          symbol: 'none',
+          lineStyle: { width: 2, type: 'dashed', color: THEME.faint },
+          data: fitEnds(points, fit),
+        },
+      ],
+    });
+  }, [points, fit]);
+
+  return html`<div class="chart" style="height:420px" ref=${host}></div>`;
+}
+
 /* The panels a set of runs is drawn as and the columns a run is listed by, shared by every page that
    shows one. */
 
@@ -2515,6 +2859,18 @@ const BlocksCovered = ({ covered, size }) =>
    baseline is already the extreme a reader picks a comparison up to find, and saturating there keeps
    one outlying block from flattening the colour of every other. */
 const DELTA_SATURATION = 1;
+
+/* How far a block ran from the fit taken over its run, coloured out of the middle a block sitting on
+   the fit takes towards the end its own direction saturates at, which is the ramp the chart paints
+   its points with. The colours are the stylesheet's, so only where the share lands between them is
+   stated here. */
+const Deviation = ({ share }) => html`
+  <span
+    class=${'deviation ' + (share < 0 ? 'faster' : 'slower')}
+    style=${'--deviation-share:' + Math.min(1, Math.abs(share) / DEVIATION_CLAMP)}>
+    ${signed(share, percent)}
+  </span>
+`;
 
 /* How far a figure sits from the baseline, as the share of it that difference is. The colours are
    the stylesheet's, so only where the share lands between them is stated here. */
@@ -2595,6 +2951,15 @@ function runColumns(figures, { baseline, suiteBlocks } = {}) {
     ),
     peakHeapMean: figureColumn('peakHeapMean', 'Mean peak heap', of('peakHeapMean'), (value) =>
       figure(value, baseline?.heap, bytes)
+    ),
+    // Proving times are added by hand, so most runs carry none. A run with none carries a count of
+    // nothing rather than an unrecorded number of them, so it states the zero and holds it back from
+    // the counts a reader is there to find.
+    proving: figureColumn(
+      'proving',
+      'Provings',
+      (entry) => entry.proving?.length ?? 0,
+      (count) => (count > 0 ? String(count) : html`<span class="zero">0</span>`)
     ),
     sha256: column(
       'sha256',
@@ -2710,6 +3075,7 @@ function RunsPanel({ entries, figures, suiteBlocks, fixed = NOTHING }) {
       columns.blocks,
       columns.meanCost,
       columns.peakHeapMean,
+      columns.proving,
       columns.sha256,
       columns.elf,
     ].filter((column) => !dropped.includes(column.key));
@@ -2862,6 +3228,13 @@ function blockCategories(names) {
     test: { of: test, shown: (group) => group.split(' / ').slice(-2).join(' / ') },
   };
 }
+
+/* What a synthetic corpus's blocks are gathered by, one of them rather than both, a test sitting
+   under the file that holds it. */
+const CATEGORY_LAYERS = [
+  { key: 'file', label: 'File' },
+  { key: 'test', label: 'Test' },
+];
 
 /* A listing of blocks is broken up by the test alone, the file it sits in being what tells one
    family of tests from another and reading as part of the test's own name. */
@@ -3110,6 +3483,248 @@ function CostPanels({ rows, fixtures, shares }) {
   `;
 }
 
+/* The cards one machine holds, counted rather than listed, a machine carrying four of one card
+   otherwise printing that card four times. Empty for a machine that proves on its CPU alone. */
+const graphics = (gpus = NOTHING) =>
+  [...new Set(gpus)]
+    .map((card) => gpus.filter((other) => other === card).length + ' ' + card)
+    .join(', ');
+
+/*
+ * The blocks a proving run timed, gathered by the file their tests sit in or by the test itself and
+ * stated as the mean of each group.
+ *
+ * A family whose blocks all miss the fit the same way is one the cost model prices wrong, which one
+ * block at a time does not show. The error is taken between the two means rather than averaged over
+ * the blocks, so it is the figure the columns beside it already state and a reader dividing one by
+ * the other lands on it.
+ */
+function ProvingCategories({ categories, names, measured, predicted }) {
+  const [grouping, setGrouping] = useState(CATEGORY_LAYERS[0].key);
+
+  const groups = useMemo(() => {
+    const { of } = categories[grouping];
+    const gathered = new Map();
+    for (const name of names) {
+      const key = of(name);
+      if (!gathered.has(key)) gathered.set(key, []);
+      gathered.get(key).push(name);
+    }
+    return [...gathered.entries()].map(([name, held]) => ({ name, names: held }));
+  }, [names, categories, grouping]);
+
+  const mean = (group, of) =>
+    group.names.reduce((sum, name) => sum + of(name), 0) / group.names.length;
+  const meanTime = (group) => mean(group, measured);
+  const meanFitted = (group) => mean(group, predicted);
+  const meanError = (group) => (meanTime(group) - meanFitted(group)) / meanFitted(group);
+  const shown = (group) => categories[grouping].shown(group.name);
+
+  return html`
+    <${Card} title="Proving time per category">
+      <div class="chip-sets">
+        <${ChoiceChips}
+          label="Group by"
+          options=${CATEGORY_LAYERS}
+          value=${grouping}
+          onChange=${setGrouping} />
+      </div>
+      <${DataTable}
+        columns=${[
+          {
+            ...column(
+              'group',
+              'Category',
+              shown,
+              (group) => html`<${Truncate} text=${shown(group)} />`
+            ),
+            fill: true,
+          },
+          figureColumn('blocks', 'Blocks', (group) => group.names.length, String),
+          figureColumn('time', 'Time', meanTime, duration),
+          figureColumn('fitted', 'Fitted', meanFitted, duration),
+          figureColumn(
+            'error',
+            'Error',
+            meanError,
+            (share) => html`<${Deviation} share=${share} />`
+          ),
+        ]}
+        rows=${groups}
+        rowKey=${(group) => group.name}
+        initialSort=${{ key: 'group', direction: 'ascending' }} />
+    <//>
+  `;
+}
+
+/*
+ * Proving times measured over the blocks a run profiled, drawn against what it priced them at and
+ * fitted by the model the reader picked.
+ *
+ * Times are added by hand beside the profiles of the ELF they were proved from, so a run carries one
+ * dataset per machine it has been proved on and the panel is drawn only for a run carrying one. A
+ * dataset covers whatever blocks the proving ran over, which is why the points are taken over the
+ * blocks it and the run share rather than over either alone.
+ */
+function ProvingPanel({ entry, run, fixtures }) {
+  const [file, setFile] = useState(entry.proving[0].file);
+  const [model, setModel] = useState(PROVING_MODELS[0].key);
+  const chosen = entry.proving.find((dataset) => dataset.file === file) ?? entry.proving[0];
+  const method = PROVING_MODELS.find((candidate) => candidate.key === model) ?? PROVING_MODELS[0];
+  const cards = graphics(chosen.meta.hardware.gpus);
+  const state = useAsync(() => loadProving(entry, chosen.file), [entry.runId, chosen.file]);
+
+  /* Ordered by cost, which is the order the zoom slider draws its silhouette in. A scatter left in
+     the order its fixtures are named jumps the whole cost range between neighbours, which the
+     silhouette then reads as noise rather than as the shape of the run. */
+  const points = useMemo(() => {
+    const times = state.value?.proving_time_ms;
+    if (!times) return NOTHING;
+    return fixtures
+      .filter((name) => times[name] != null)
+      .map((name) => {
+        const { cost, metadata } = run.profile[name];
+        return [cost.total, times[name], metadata.block_number, name, metadata.gas_used];
+      })
+      .sort((left, right) => left[0] - right[0]);
+  }, [state.value, fixtures, run]);
+
+  const fit = useMemo(
+    () => (points.length > 0 ? fitted(points, method.of(points)) : null),
+    [points, method]
+  );
+
+  /* The blocks the dataset timed, and each of them by name, which is how the listing under the chart
+     reaches what the chart holds by position. */
+  const timed = useMemo(() => points.map((point) => point[3]), [points]);
+  const held = useMemo(() => new Map(points.map((point) => [point[3], point])), [points]);
+
+  const measured = (name) => held.get(name)[1];
+  const predicted = (name) => fit.predicted(held.get(name));
+  /* The same figure the tooltip states, which is the gap over the fitted time rather than over the
+     measured one, so a point hovered and the row standing for it carry one number. */
+  const error = (name) => (measured(name) - predicted(name)) / predicted(name);
+
+  const dimensions = useMemo(
+    () => [
+      { kind: RANGE, key: 'gas', label: 'Gas', of: (name) => held.get(name)[4], print: si },
+      { kind: RANGE, key: 'cost', label: 'Cost', of: (name) => held.get(name)[0], print: si },
+      { kind: RANGE, key: 'time', label: 'Time', of: measured, print: duration },
+      /* The bounds a reader sets to reach the tail, which is what the listing is here for. The
+         signed error reaches the slow tail and the fast one apart, since a block that overran the
+         fit and one that beat it are asked after separately, and the unsigned one reaches whichever
+         blocks sit furthest from the fit whichever way they miss it. */
+      {
+        kind: RANGE,
+        key: 'error',
+        label: 'Error',
+        of: error,
+        print: percent,
+        presets: () => [95, 99, -95, -99],
+      },
+      {
+        kind: RANGE,
+        key: 'deviation',
+        label: '|Error|',
+        of: (name) => Math.abs(error(name)),
+        print: percent,
+        presets: () => [95, 99],
+      },
+    ],
+    [held, fit]
+  );
+
+  /* The families a synthetic corpus gathers under, which a corpus taken off the chain has none of,
+     its blocks being named after the tool that pulled them and a hash. */
+  const categories = useMemo(() => blockCategories(timed), [timed]);
+
+  return html`
+    <!-- What the reader picks, and what their pick came to. The panels under it are all drawn from
+         the dataset and the model chosen here, so the choice is asked once and above them. -->
+    <${Card} title="Proving time correlation">
+      <div class="chip-sets">
+        <!-- Asked even where one dataset answers it, the chip being what names the proving run the
+             panels below were measured on. -->
+        <${ChoiceChips}
+          label="Dataset"
+          options=${entry.proving.map((dataset) => ({
+            key: dataset.file,
+            label: dataset.meta.name,
+          }))}
+          value=${chosen.file}
+          onChange=${setFile} />
+        <${ChoiceChips}
+          label="Model"
+          options=${PROVING_MODELS}
+          value=${method.key}
+          onChange=${setModel} />
+      </div>
+      ${state.error && html`<p class="empty">${state.error.message}</p>`}
+      ${fit &&
+      html`
+        <!-- The machine on one row and what the fit came to on the next, a proving time being a
+             figure of the hardware behind it as much as of the block it proved. -->
+        <${FieldStrip}>
+          <${Field} label="Machines">${chosen.meta.machines}<//>
+          <${Field} label="CPU">${chosen.meta.hardware.cpu}<//>
+          <!-- Left out for a machine that proves on its CPU alone, which has none rather than an
+               unrecorded number of them. -->
+          ${cards && html`<${Field} label="GPUs">${cards}<//>`}
+          <${Field} label="RAM">${bytes(chosen.meta.hardware.ram_bytes)}<//>
+          <${Field} label="OS">${chosen.meta.hardware.os}<//>
+        <//>
+        <${FieldStrip}>
+          <!-- Out of what the run profiled rather than out of the corpus, which is what the run's
+               own block count above is stated out of, since a dataset covers whatever the proving
+               ran over. -->
+          <${Field} label="Blocks">
+            <${BlocksCovered} covered=${points.length} size=${fixtures.length} />
+          <//>
+          <${Field} label="Slope">${rate(fit.slope)}<//>
+          <${Field} label="Intercept">${duration(fit.intercept)}<//>
+          <${Field} label=${html`R<sup>2</sup>`}>${fit.determination.toFixed(3)}<//>
+          <!-- Where the fit starts to fail, which one rank alone would leave a reader to guess at.
+               Unsigned, a rank of the signed error being a rank of one tail rather than of how far
+               the fit misses. -->
+          ${ERROR_RANKS.map(
+            (rank, at) => html`
+              <${Field} key=${rank} label=${'p' + rank + ' |error|'}>
+                ${percent(fit.errors[at])}
+              <//>
+            `
+          )}
+        <//>
+      `}
+    <//>
+    ${fit &&
+    html`
+      <${Card} title="Proving time against cost">
+        <${ProvingChart} points=${points} fit=${fit} />
+      <//>
+      ${categories &&
+      html`<${ProvingCategories}
+        categories=${categories}
+        names=${timed}
+        measured=${measured}
+        predicted=${predicted} />`}
+      <!-- The same blocks the chart draws, listed so the tails can be sorted to the top and read by
+           name, which a scatter of a thousand points cannot be. It is the listing every other page
+           draws, so a block is searched for, broken up and folded here exactly as it is there. -->
+      <${BlocksPanel}
+        title="Proving time per block"
+        names=${timed}
+        metadata=${(name) => run.profile[name].metadata}
+        filters=${dimensions}
+        columns=${[
+          figureColumn('cost', 'Cost', (name) => held.get(name)[0], si),
+          figureColumn('time', 'Time', measured, duration),
+          figureColumn('fitted', 'Fitted', predicted, duration),
+          figureColumn('error', 'Error', error, (figure) => html`<${Deviation} share=${figure} />`),
+        ]} />
+    `}
+  `;
+}
+
 /* The two panels a comparison reads block by block rather than over the corpus as a whole, and what
    both of them ask the reader before drawing. */
 
@@ -3211,13 +3826,6 @@ function CompareBlocksPanel({ rows, fixtures }) {
 /* Heads the column stating how far a run sits from the baseline, which is the same figure the
    listing of blocks prints beside each magnitude. */
 const DELTA = '\u0394';
-
-/* What a synthetic corpus's blocks are gathered by, one of them rather than both, a test sitting
-   under the file that holds it. */
-const CATEGORY_LAYERS = [
-  { key: 'file', label: 'File' },
-  { key: 'test', label: 'Test' },
-];
 
 /*
  * The blocks of a synthetic corpus gathered by the file their tests sit in or by the test itself,
@@ -3533,6 +4141,10 @@ function RunView({ entry, run, fixtures, figures, size }) {
         // line, since what a backend reported is the whole of why the block is listed here.
         column('reason', 'Reason', (name) => run.failures[name].reason),
       ]} />`}
+    <!-- Last, and only for a run someone has published proving times for, since it is the one panel
+         drawn from a measurement this crate did not take. -->
+    ${entry.proving?.length > 0 &&
+    html`<${ProvingPanel} entry=${entry} run=${run} fixtures=${fixtures} />`}
   `;
 }
 

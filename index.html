@@ -240,6 +240,8 @@ input:focus-visible,
   flex-direction: column;
   gap: 12px;
   padding: 24px;
+  /* Clear of the viewport edge wherever a fragment scrolls a panel to the top of it. */
+  scroll-margin-top: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -250,6 +252,12 @@ input:focus-visible,
   margin: 0;
   font-size: 16px;
   font-weight: 600;
+}
+
+/* A panel's heading links to the panel, so a reader hands someone the card rather than the page. It
+   reads as the heading it is until the pointer reaches it. */
+.card-head a {
+  color: inherit;
 }
 
 /* A note under a panel heading, qualifying what the figures below it mean. An empty state is a
@@ -892,6 +900,12 @@ import { signal } from '@preact/signals';
 import { html } from 'htm/preact';
 import * as echarts from 'echarts';
 
+/* A page the browser has opened before is restored to the scroll it was left at, which overrides the
+   panel a fragment names. A fragment states where to open, so the restoring gives way to it, and a
+   route carrying none is left to restore as it always did. Set before this module waits on anything,
+   the restoring landing while the first fetches are still out. */
+if (location.hash) history.scrollRestoration = 'manual';
+
 /* How every figure on the page is printed. A fixture name and a guest version both come from JSON
    and both reach the DOM, so text goes in as text and only the chart tooltips, which take markup,
    escape an interpolation on the way in. */
@@ -1280,10 +1294,23 @@ const compareUrl = (ids) => 'compare?' + new URLSearchParams({ runs: ids.join(',
 
 /* The furniture a panel is drawn out of, and the two controls every panel states a choice with. */
 
+/* What a panel is named in a fragment, taken from its own heading so a link states the panel it
+   opens rather than a number the page would have to keep stable across a reordering. */
+const slug = (title) =>
+  String(title)
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '');
+
+/* The route a fragment hangs off, spelled whole. A bare fragment would resolve against the base the
+   page declares rather than against the route the reader is on, which is a different document and so
+   a fresh load rather than a jump. */
+const fragment = (name) => BASE + route.value + '#' + name;
+
 const Card = ({ title, control, children }) => html`
-  <div class="card">
+  <div class="card" id=${slug(title)}>
     <div class="card-head">
-      <h2>${title}</h2>
+      <h2><a href=${fragment(slug(title))}>${title}</a></h2>
       ${control}
     </div>
     ${children}
@@ -4398,9 +4425,54 @@ function Drawn({ children }) {
   return children;
 }
 
+/* How long a fragment keeps the panel it names in view while the page around it is still drawing. */
+const SETTLING = 4000;
+
+/* What a reader does to say they would rather be left where they are than followed to a panel. */
+const RELEASING = ['wheel', 'touchmove', 'keydown'];
+
+/*
+ * The panel a fragment names, held in view while the page assembles.
+ *
+ * A page draws its panels as their numbers land, so what a fragment names is rarely there on the
+ * frame the page opens, and a listing of a thousand blocks drawn above it afterwards moves it down
+ * again. The panel is therefore followed as the page changes under it rather than scrolled to once,
+ * and let go of at the reader's first scroll, which is the point they would rather be left where
+ * they are.
+ */
+function useFragment() {
+  const name = location.hash.slice(1);
+  useEffect(() => {
+    if (!name) return;
+    let frame = 0;
+    // At most one scroll a frame, since a listing mounting a thousand rows reports thousands of
+    // changes and every one of them would otherwise ask for its own.
+    const reach = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        document.getElementById(name)?.scrollIntoView();
+      });
+    };
+    const observer = new MutationObserver(reach);
+    const stop = () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      for (const event of RELEASING) removeEventListener(event, stop);
+    };
+    observer.observe(document.body, { childList: true, subtree: true });
+    for (const event of RELEASING) addEventListener(event, stop, { passive: true });
+    const timer = setTimeout(stop, SETTLING);
+    reach();
+    return stop;
+  }, [name]);
+}
+
 function App() {
   const full = route.value;
   const { section, view } = page(full);
+  useFragment();
 
   // A reader who lands on the root, or on a route spelled with the slash a directory would carry,
   // leaves with the address that names what they are looking at.

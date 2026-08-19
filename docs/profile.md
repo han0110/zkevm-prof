@@ -148,9 +148,9 @@ into `syscall`, `system` and `opcode`.
 
 #### Source
 
-- [Gas formula](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/vm/gas.rs)
-- [Trace cell table](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/artifacts/rv64im_costs.json)
-- [Constraint table](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/artifacts/rv64im_complexity.json)
+- [Gas formula](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/vm/gas.rs)
+- [Trace cell table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_costs.json)
+- [Constraint table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_complexity.json)
 
 ### ZisK
 

@@ -31,8 +31,8 @@ openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "p
 
 # sp1
 enum-map = "2"
-sp1-core-executor = "6.3.1"
-sp1-primitives = "6.3.1"
+sp1-core-executor = "6.4.0"
+sp1-primitives = "6.4.0"
 
 # ere
 ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.15.0" }
@@ -46,7 +46,7 @@ stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests"
 [target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
 libc = "0.2"
 memmap2 = "0.9"
-sp1-jit = "6.3.1"
+sp1-jit = "6.4.0"
 
 [build-dependencies]
 cargo_metadata = "0.23"

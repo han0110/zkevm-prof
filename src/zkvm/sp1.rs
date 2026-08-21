@@ -335,7 +335,8 @@ fn head(memory: i32, at: u64) -> Result<[u8; ANCHOR]> {
         "failed to read the guest's input region"
     );
     let mut head = [0u8; ANCHOR];
-    for (bytes, record) in head.chunks_mut(8).zip(records.chunks_exact(16)) {
+    let (records, _) = records.as_chunks::<16>();
+    for (bytes, record) in head.chunks_mut(8).zip(records) {
         bytes.copy_from_slice(&record[8..]);
     }
     Ok(head)

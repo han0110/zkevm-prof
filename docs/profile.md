@@ -148,9 +148,9 @@ into `syscall`, `system` and `opcode`.
 
 #### Source
 
-- [Gas formula](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/vm/gas.rs)
-- [Trace cell table](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/artifacts/rv64im_costs.json)
-- [Constraint table](https://github.com/succinctlabs/sp1/blob/v6.3.1/crates/core/executor/src/artifacts/rv64im_complexity.json)
+- [Gas formula](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/vm/gas.rs)
+- [Trace cell table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_costs.json)
+- [Constraint table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_complexity.json)
 
 ### ZisK
 
@@ -164,9 +164,9 @@ The cost unit is trace cells, and split into `base`, `precompile`, `memory`, `op
 
 #### Source
 
-- [Emulator execution statistics](https://github.com/0xPolygonHermez/zisk/blob/v1.0.0-alpha/emulator/src/stats/stats.rs)
-- [Base/Main/Memory weights](https://github.com/0xPolygonHermez/zisk/blob/v1.0.0-alpha/emulator/src/emu_costs.rs)
-- [Operation weights](https://github.com/0xPolygonHermez/zisk/blob/v1.0.0-alpha/core/src/zisk_ops_costs.rs)
+- [Emulator execution statistics](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/emulator/src/stats/stats.rs)
+- [Base/Main/Memory weights](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/emulator/src/emu_costs.rs)
+- [Operation weights](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/core/src/zisk_ops_costs.rs)
 
 ## Peak heap
 
@@ -176,7 +176,7 @@ reads the same whether the allocator grows up or down.
 
 - OpenVM - `_end` to the end of the address space.
 - SP1 - `_end` to the input region above it.
-- ZisK - `_kernel_heap_bottom` to `_kernel_heap_top`.
+- ZisK - `_heap_bottom` to `_heap_top`.
 
 The input buffer falls inside the reading only on OpenVM, which reads it into the guest's first
 allocation. SP1 and ZisK hand the guest a pointer to a region outside the heap.

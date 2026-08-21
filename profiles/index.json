@@ -4,6 +4,27 @@
       "version": "0.1.0",
       "zkvm": "openvm",
       "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "8b93fb336bf228e8ed59943d390397069d019f2c27f532489669fbda9c4db46c",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1787309767,
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "reth",
       "stateless_validator_version": "f804dc1",
       "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",

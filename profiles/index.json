@@ -6,10 +6,10 @@
       "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "zesu",
       "stateless_validator_version": "glamsterdam-devnet-7",
-      "elf_url": "https://github.com/han0110/zesu-zkvm/releases/download/glamsterdam-devnet-7/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
+      "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-zesu-openvm-v2.1.0-preview.elf",
       "elf_sha256": "49c817c4cc43f8757cf452c3cbe2f0cc67881da9dd6d05581eaa1e95e2443b8b",
       "suite": "mainnet-25580000-1000",
-      "generated_at": 1786849751,
+      "generated_at": 1787308492,
       "composition": [
         {
           "name": "precompile",

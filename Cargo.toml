@@ -19,12 +19,13 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 walkdir = "2"
 
 # zisk
-zisk-common = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
-zisk-core = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
-ziskemu = { git = "https://github.com/0xPolygonHermez/zisk", tag = "v1.0.0-alpha" }
+zisk-common = "1.1.0-alpha"
+zisk-core = "1.1.0-alpha"
+zisk-transpiler-riscv = "1.1.0-alpha"
+ziskemu = "1.1.0-alpha"
 
 # openvm
-openvm-sdk = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462", features = ["rvr"] }
+openvm-sdk = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462", default-features = false, features = ["parallel", "rvr"] }
 openvm-sdk-config = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
 openvm-stark-sdk = { git = "https://github.com/han0110/stark-backend.git", branch = "patch/v2.1.0-preview" }
 openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
@@ -35,11 +36,11 @@ sp1-core-executor = "6.4.0"
 sp1-primitives = "6.4.0"
 
 # ere
-ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.15.0" }
+ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.16.2" }
 
 # ere-guests
-stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
-stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.15.0" }
+stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
+stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
 
 # sp1, on the target its executor compiles a native JIT for. Only there is guest memory a file the
 # backend can read the heap out of, so only there are the transpiler and its JIT driven directly.

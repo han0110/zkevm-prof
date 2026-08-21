@@ -12,11 +12,12 @@ use std::ops::Range;
 
 use anyhow::{Result, anyhow, bail, ensure};
 use zisk_common::EmuTrace;
-use zisk_core::{RAM_ADDR, RAM_SIZE, Riscv2zisk, ZiskRom};
+use zisk_core::{RAM_ADDR, RAM_SIZE, ZiskRom};
+use zisk_transpiler_riscv::Riscv2zisk;
 use ziskemu::{Emu, EmuOptions};
 
 use crate::zkvm::{
-    Composition, Cost, Execution, Kind, Profiler, heap_range, heap_symbol, peak_heap_bytes,
+    Composition, Cost, Execution, Kind, Profiler, heap_range, peak_heap_bytes, symbol_address,
 };
 
 /// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
@@ -71,12 +72,32 @@ fn row(kind: &'static str) -> &'static str {
     }
 }
 
-/// Symbols the ZisK linker script delimits the guest heap with.
+/// Symbol pairs a ZisK guest delimits its heap with, bottom then top, in the order they are looked
+/// for.
 ///
-/// The stack sits between the guest image and the heap, growing down from `_kernel_heap_bottom`, so
-/// `_end` marks the bottom of the stack rather than of the heap.
-const HEAP_BOTTOM: &str = "_kernel_heap_bottom";
-const HEAP_TOP: &str = "_kernel_heap_top";
+/// The ZisK linker script names them `_heap_bottom` and `_heap_top`, while the Nethermind guest
+/// links a script of its own carrying the names ZisK used before v1.1.0-alpha, where the stack sat
+/// between the guest image and the heap rather than in a section of its own.
+const HEAP_SYMBOLS: [(&str, &str); 2] = [
+    ("_heap_bottom", "_heap_top"),
+    ("_kernel_heap_bottom", "_kernel_heap_top"),
+];
+
+/// The symbol `elf` marks the bottom of its heap with, and the address it stops the heap at.
+///
+/// The pair a guest carries follows from the linker script it was built with, so the first pair it
+/// carries any of is the one it is delimited by.
+fn heap_delimiters(elf: &[u8]) -> Result<(&'static str, u64)> {
+    for (bottom, top) in HEAP_SYMBOLS {
+        if let Some(address) = symbol_address(elf, top)? {
+            return Ok((bottom, address));
+        }
+    }
+    bail!(
+        "the guest ELF carries none of {}, which delimit its heap",
+        HEAP_SYMBOLS.map(|(_, top)| top).join(", ")
+    )
+}
 
 pub struct ZiskProfiler {
     rom: ZiskRom,
@@ -89,7 +110,8 @@ impl ZiskProfiler {
         let rom = Riscv2zisk::new(elf)
             .run()
             .map_err(|error| anyhow!("failed to transpile the ELF into a ZisK ROM: {error}"))?;
-        let heap = heap_range(elf, HEAP_BOTTOM, heap_symbol(elf, HEAP_TOP)?)?;
+        let (heap_bottom, heap_top) = heap_delimiters(elf)?;
+        let heap = heap_range(elf, heap_bottom, heap_top)?;
         // `Mem::read_slice` panics rather than failing on a range it holds no one section for, so
         // the RAM section bounds what the emulator can be asked for.
         ensure!(

@@ -41,8 +41,8 @@ pub fn heap_symbol(elf: &[u8], symbol: &str) -> Result<u64> {
 /// Guest addresses the heap covers, from the `start` symbol its zkVM's toolchain marks the bottom
 /// with and the `end` that zkVM stops it at.
 ///
-/// Which symbol marks the bottom is a property of the toolchain rather than of the guest, so every
-/// guest built for one zkVM is delimited alike however it allocates.
+/// Which symbol marks the bottom is a property of the toolchain that linked the guest rather than of
+/// how the guest allocates, so one pair of delimiters serves every allocator.
 pub fn heap_range(elf: &[u8], start: &str, end: u64) -> Result<Range<u64>> {
     let start = heap_symbol(elf, start)?;
     ensure!(

@@ -4,6 +4,39 @@
       "version": "0.1.0",
       "zkvm": "zisk",
       "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "194118a5ac9534d50a22cbab033715875a8872d4630018c61e1608ecf4a994cd",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1787335024,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
       "stateless_validator": "nethermind",
       "stateless_validator_version": "glamsterdam-devnet-7",
       "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-nethermind-zisk-v1.1.0-alpha.elf",

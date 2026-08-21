@@ -2,6 +2,39 @@
   "runs": [
     {
       "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "698d7bac6f676e2b45e8995631c921b056d1ab67a4dc979dadc43acd20f6bd59",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1787312149,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
       "zkvm": "openvm",
       "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "ethrex",

@@ -4,6 +4,39 @@
       "version": "0.1.0",
       "zkvm": "zisk",
       "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7.2-2026-07-29",
+      "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-zesu-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "375301d200628484ff3b677f45f10d61b36c4311e305aa9c86ca80c2d0c64900",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1787338721,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
       "stateless_validator": "reth",
       "stateless_validator_version": "f804dc1",
       "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-zisk-v1.1.0-alpha.elf",
@@ -43,6 +76,39 @@
       "elf_sha256": "b4593b252d4fd1b8d4b556e3239bb7d0a53c196a92a249da9d0a828d34576c74",
       "suite": "mainnet-25580000-1000",
       "generated_at": 1787326032,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "nethermind",
+      "stateless_validator_version": "glamsterdam-devnet-7",
+      "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-nethermind-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "b4593b252d4fd1b8d4b556e3239bb7d0a53c196a92a249da9d0a828d34576c74",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1787319767,
       "composition": [
         {
           "name": "base",
@@ -226,6 +292,39 @@
     },
     {
       "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "194118a5ac9534d50a22cbab033715875a8872d4630018c61e1608ecf4a994cd",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1787308609,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
       "zkvm": "openvm",
       "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "zesu",
@@ -242,6 +341,39 @@
         {
           "name": "rv64",
           "note": "RISC-V instructions"
+        }
+      ]
+    },
+    {
+      "version": "0.1.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "698d7bac6f676e2b45e8995631c921b056d1ab67a4dc979dadc43acd20f6bd59",
+      "suite": "eest-v0.6.2-100m",
+      "generated_at": 1787304813,
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
         }
       ]
     },

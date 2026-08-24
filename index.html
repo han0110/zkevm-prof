@@ -1529,7 +1529,11 @@ const RANGE = {
 const CHOICE = {
   control: (props) => html`<${Choice} ...${props} />`,
   offers: (domain) => domain.length > 1,
-  sorted: (values) => values.sort(),
+  // A figure is ordered by its magnitude, an order taken on it as text putting 100 ahead of 10.
+  sorted: (values) =>
+    values.sort((left, right) =>
+      typeof left === 'number' ? left - right : String(left).localeCompare(String(right))
+    ),
   whole: () => [],
   // Answering with none of the values reads as answering with all of them, so neither narrows.
   covers: (answer) => answer.length === 0,
@@ -2402,11 +2406,13 @@ function CompositionChart({ series, kinds, notes, shares }) {
 const fixtureName = (point) => String(point[3] ?? point[2]);
 
 /* One order shared by every series, taken over the union of their fixtures so a fixture keeps the
-   same place in each line and the lines stay comparable. */
+   same place in each line and the lines stay comparable. It is the order the block listings take,
+   which reads the gas limit a case was filled to by its magnitude rather than by its spelling, so a
+   case runs from its cheapest limit to its dearest along the axis. */
 function positions(series) {
   const names = Array.from(
     new Set(series.flatMap((line) => line.points.map(fixtureName)))
-  ).sort((left, right) => left.localeCompare(right));
+  ).sort((left, right) => gasLimitOrder(left).localeCompare(gasLimitOrder(right)));
   return new Map(names.map((name, index) => [name, index]));
 }
 
@@ -3246,6 +3252,34 @@ const caseTokens = (name) => {
   return name.slice(open + 1, name.lastIndexOf(']')).split('-');
 };
 
+/* The gas limit a case was filled to, in millions, which is the parameter a `gas` token introduces.
+   Read from there rather than from wherever a parameter of that shape sits, since a case carries
+   parameters of its own that name no limit. */
+const gasLimit = (name) => {
+  const tokens = caseTokens(name);
+  const marked = tokens.indexOf('gas');
+  if (marked < 0) return null;
+  const limit = (tokens[marked + 1] ?? '').match(/^value_(\d+)M$/)?.[1];
+  return limit == null ? null : Number(limit);
+};
+
+/* How a limit is written wherever one is shown, which is the millions it names. */
+const gasLimitLabel = (limit) => limit + 'M';
+
+/* Digits a limit is padded to where a name is ordered by one. An order taken on the name alone reads
+   the limit as text, which puts 100M ahead of 10M and both ahead of 1M, and four digits cover every
+   limit a benchmark corpus is filled to. The padding never reaches the page. */
+const GAS_LIMIT_ORDER_DIGITS = 4;
+
+/* A name ordered by the limit its case was filled to rather than by how that limit is spelled, which
+   is what keeps the blocks of one case together and in the order their limits run. */
+const gasLimitOrder = (name) => {
+  const limit = gasLimit(name);
+  if (limit == null) return name;
+  const padded = String(limit).padStart(GAS_LIMIT_ORDER_DIGITS, '0');
+  return name.replace('value_' + limit + 'M', 'value_' + padded + 'M');
+};
+
 /* The tokens every case in the corpus carries. Those name the corpus rather than the case, so what
    is left once they are taken off is what tells one row from another. Held by value rather than by
    position, since a case that takes an extra parameter carries the same tokens further along. */
@@ -3300,8 +3334,9 @@ function blockGroups(names) {
  * the parameters it was filled with, of which the segments every block shares and the parameters
  * every case carries tell one row from another nothing, so neither is stated. What is left is the
  * parameters that are the case's own, under a heading that gives the rest, or that same heading
- * ahead of them where there is none. The whole of the name is on the clipboard from the button
- * beside it either way.
+ * ahead of them where there is none. The gas limit stands last and on its own rather than among the
+ * parameters, so a corpus filled to several of them reads as one case over a run of limits. The
+ * whole of the name is on the clipboard from the button beside it either way.
  */
 function blockLabels(names) {
   const cases = names
@@ -3311,9 +3346,14 @@ function blockLabels(names) {
   const shared = sharedTokens(cases);
   return (name, block, heading) => {
     if (fromChain(name)) return 'Block #' + block.block_number;
-    const own = caseTokens(name).filter((token) => !shared.has(token));
+    const limit = gasLimit(name);
+    const written = limit == null ? null : 'value_' + limit + 'M';
+    const own = caseTokens(name)
+      .filter((token) => !shared.has(token))
+      .map((token) => (token === written ? 'value' : token));
     const label = own.length ? own.join('-') : testName(name) || name;
-    return heading ? heading(name) + ' / ' + label : label;
+    const stated = heading ? heading(name) + ' / ' + label : label;
+    return limit == null ? stated : stated + ' / ' + gasLimitLabel(limit);
   };
 }
 
@@ -3325,6 +3365,21 @@ const SEARCH_DEBOUNCE = 200;
 /* A listing of blocks opens in the order its corpus numbers or names them, which is the order a
    reader looks a block up in. Any other order is one column click away. */
 const BLOCK_ORDER = { key: 'name', direction: 'ascending' };
+
+/* The limit a corpus's cases were filled to, offered wherever a listing holds more than one of them,
+   so a reader asks for one and reads a case at that limit rather than at seven. It stands ahead of
+   the gas a block used, which is what the block did rather than what it was filled to. */
+const GAS_TARGET = {
+  kind: CHOICE,
+  key: 'gas-target',
+  label: 'Gas target',
+  of: gasLimit,
+  print: gasLimitLabel,
+};
+
+/* What a listing offers where the limit is the only dimension it narrows by, held rather than built
+   so that a redraw does not rebuild the scale behind it. */
+const GAS_TARGET_FILTERS = [GAS_TARGET];
 
 /*
  * Every block a run or a corpus holds, one row each, filterable by name and broken up by the layers
@@ -3432,7 +3487,8 @@ function BlocksPanel({
                 <${CopyButton} text=${name} label=${'Copy the full name of ' + name} />
               </div>
             `,
-            sortValue: (name) => (fromChain(name) ? metadata(name).block_number : name),
+            sortValue: (name) =>
+              fromChain(name) ? metadata(name).block_number : gasLimitOrder(name),
           },
           figureColumn('gas', 'Gas', (name) => metadata(name).gas_used, si),
           ...columns,
@@ -3658,6 +3714,7 @@ function ProvingPanel({ entry, run, fixtures }) {
 
   const dimensions = useMemo(
     () => [
+      GAS_TARGET,
       { kind: RANGE, key: 'gas', label: 'Gas', of: (name) => held.get(name)[4], print: si },
       { kind: RANGE, key: 'cost', label: 'Cost', of: (name) => held.get(name)[0], print: si },
       { kind: RANGE, key: 'time', label: 'Time', of: measured, print: duration },
@@ -3845,6 +3902,7 @@ function CompareBlocksPanel({ rows, fixtures }) {
     <${BlocksPanel}
       names=${fixtures}
       metadata=${(name) => rows[0].run.profile[name].metadata}
+      filters=${GAS_TARGET_FILTERS}
       choices=${html`
         <${BaselineChips}
           rows=${rows}
@@ -4077,6 +4135,7 @@ function RunView({ entry, run, fixtures, figures, size }) {
 
   const dimensions = useMemo(
     () => [
+      GAS_TARGET,
       { kind: RANGE, key: 'gas', label: 'Gas', of: (name) => metadata(name).gas_used, print: si },
       {
         kind: RANGE,
@@ -4389,7 +4448,8 @@ function SuiteView({ suite, entries }) {
     <//>
     <${BlocksPanel}
       names=${names}
-      metadata=${(name) => metadata.get(name)} />
+      metadata=${(name) => metadata.get(name)}
+      filters=${GAS_TARGET_FILTERS} />
     <${RunsPanel}
       entries=${entries}
       figures=${figures}

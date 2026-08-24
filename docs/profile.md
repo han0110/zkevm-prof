@@ -1,11 +1,11 @@
 # zkEVM guest cost profiling
 
-Measures what a zkVM charges to prove a stateless validator executing a block. The cost is the zkVM's
-own price for the execution rather than wall clock time, so it reproduces on any machine and compares
-across guests that ran the same blocks.
+Measures what a zkVM charges to prove a stateless validator that executes a block. The cost is the
+zkVM's own price for the execution, not wall clock time. It therefore reproduces on any machine, and
+it compares guests that ran the same blocks.
 
-Nothing in the method depends on how a guest is written. A backend prices whatever program it is
-handed and reads the memory that program left behind, so every guest on one zkVM is measured alike.
+A backend prices the program it receives and reads the memory that program left behind. Every guest
+on one zkVM is therefore measured the same way, whatever it is written in.
 
 ```sh
 cargo build --release
@@ -21,56 +21,97 @@ zkevm-prof profile \
   --suite mainnet-25580000-1000
 ```
 
-| Option                  | Values                               | Meaning                                                          |
-| ----------------------- | ------------------------------------ | ---------------------------------------------------------------- |
-| `--zkvm`                | `openvm`, `sp1`, `zisk`              | zkVM the guest is profiled on.                                   |
-| `--stateless-validator` | the guests `elf-registry.json` lists | Guest to profile.                                                |
-| `--suite`               | the corpora `suite-registry.json` lists | Corpus to profile, fetched unless an input directory is given. |
-| `--input`               | path                                 | Directory of EEST fixtures, walked recursively for `.json`, in place of the fetched corpus. |
-| `--filter`              | regular expression                   | Profiles only the blocks whose name matches, in place of the whole corpus. |
-| `--output-dir`          | path                                 | Directory the profile is published under, `profiles` by default. |
-| `--elf`                 | path                                 | Guest ELF to profile, in place of the downloaded one.            |
-| `--force`               | flag                                 | Reprofiles a guest whose run is already published.               |
+| Option                  | Values                                  | Meaning                                                   |
+| ----------------------- | --------------------------------------- | --------------------------------------------------------- |
+| `--zkvm`                | `openvm`, `sp1`, `zisk`                 | zkVM to profile the guest on.                             |
+| `--stateless-validator` | the guests in `elf-registry.json`       | Guest to profile.                                         |
+| `--suite`               | the corpora in `suite-registry.json`    | Corpus to profile. The profiler downloads it.             |
+| `--input`               | path                                    | Directory of fixtures to profile in place of a download.  |
+| `--filter`              | regular expression                      | Profile only the blocks whose name matches.               |
+| `--output-dir`          | path                                    | Directory to write the profile to. `profiles` by default. |
+| `--elf`                 | path                                    | Guest ELF to profile in place of the downloaded one.      |
+| `--force`               | flag                                    | Profile a guest again although its run is published.      |
 
-`suite-registry.json` says where each corpus is published, so naming a suite is enough to profile it.
-The archive streams from its release straight into tar, which extracts the corpus alone into
-`fixtures/<suite>` and leaves no second copy on a disk the fixtures already fill. A corpus larger than
-the 2 GiB a release caps one asset at is published in parts and concatenated in the order listed, and
-one holding several corpora is extracted by the subdirectory the suite names. That directory is
-reused on the next run, so a corpus is fetched once, and `GITHUB_TOKEN` lifts the rate limit an
-anonymous download is held to where it is set. The fetch happens only after an already-published run
-is skipped, so re-profiling an unchanged guest downloads nothing.
+### Corpora
 
-Passing `--input` profiles the directory given instead, fetching nothing, and the suite is then that
-directory's name unless `--suite` states one.
+`suite-registry.json` gives the release each corpus comes from. Name a corpus with `--suite` and the
+profiler downloads it.
 
-`--filter` narrows either to the blocks whose key matches a regular expression, which is how a span of
-chain or a family of tests is profiled without a corpus of its own. A run so narrowed is filed under
-the corpus it was cut from and covers part of it, so it reads on the page as a run short of that
-corpus, and profiling the whole afterwards takes `--force` since the path already carries a run of
-this guest. Continuous integration narrows this way on a pull request, profiling the first hundred
-blocks of the mainnet corpus rather than a corpus of its own.
+The download streams from the release into `tar`, and `tar` extracts the corpus into
+`fixtures/<suite>`. No second copy reaches the disk. The profiler keeps that directory, so it
+downloads a corpus one time only. Set `GITHUB_TOKEN` to lift the rate limit on an anonymous
+download.
 
-The profile is written to
-`<output dir>/<stateless validator>/<ELF SHA-256, 16 digits>/<suite>.json`, which identifies a run by
-the guest, the exact binary and the corpus. The harness that measured it is recorded in the file
-rather than named by the path, so a release supersedes the runs it re-measures instead of filing a
-second copy of each beside them. A run whose file already records this harness version, that ELF,
-that ELF URL, this zkVM version and this guest version is skipped, which is checked before the guest
-is compiled so re-profiling an unchanged guest pays only for the download. `--force` measures it
-again regardless.
+A release caps one asset at 2 GiB, so the registry publishes a larger corpus in parts. The profiler
+joins them in the order the registry lists. One archive can hold several corpora, and the registry
+names the subdirectory to extract.
 
-Only the last block of each fixture is profiled, since that is the block an EEST blockchain test is
-written to exercise and the ones before it only build the state it runs against. A fixture holding
-several tests contributes one entry per test.
+`--input` profiles a directory instead. The profiler downloads nothing. The corpus name is then the
+directory name, unless `--suite` gives one.
 
-The output stands on its own. Each entry carries the cost keyed by the kinds that zkVM charges for
-alongside the `total` they sum to, and `peak_heap_bytes` on a zkVM whose backend reads the heap,
-omitting the field where none was read rather than recording a heap of nothing. A block the guest did
-not get through is recorded under `failures` with what the backend reported, which is what a profile
-short of its corpus is short by, and the key is left out entirely by a run that failed on nothing.
-The meta names the guest, the exact binary a cost was measured against, the corpus it covers and the
-kinds the cost map decomposes into, so nothing else has to be read to interpret it.
+### Part of a corpus
+
+`--filter` profiles only the blocks whose name matches a regular expression. Use it for a span of
+chain or a family of tests that has no corpus of its own.
+
+A narrowed run is filed under the corpus it was cut from, and the page shows it as a run short of
+that corpus. To profile the whole corpus afterwards, use `--force`.
+
+Continuous integration narrows this way on a pull request. It profiles the first hundred blocks of
+the mainnet corpus.
+
+### Where a run is written
+
+```
+<output dir>/<stateless validator>/<ELF SHA-256, 16 digits>/<suite>.json
+```
+
+The path identifies a run by the guest, the exact binary and the corpus. The path does not name the
+harness, which the file records instead. A new release therefore replaces the runs it measures again
+rather than files a second copy beside them.
+
+The profiler skips a run when the published file already records all of these.
+
+- The harness version.
+- The ELF and the URL it came from.
+- The zkVM version.
+- The guest version.
+
+The profiler makes this check before it downloads the corpus and before it compiles the guest. A
+skipped rerun therefore costs the ELF download and nothing more. `--force` measures the run again.
+
+### Interrupted runs
+
+A run writes what it measured to `.<suite>.json.checkpoint` beside the profile. It writes at most
+once every five seconds, and only when it measured a new block. At the end it moves that checkpoint
+onto the published path.
+
+An interrupted run therefore keeps all but the last few seconds of its work. Run the same command
+again on the same machine. It profiles only the blocks the checkpoint is short of. `--force` ignores
+the checkpoint and measures the whole corpus again.
+
+A recorded failure is carried forward. The profiler does not try that block again, because the guest
+fails on it again.
+
+Nothing reaches the published path until a whole run is ready, so a profile stays whole until the run
+that replaces it finishes. A checkpoint is never published, because everything that reads a run reads
+`.json` files alone.
+
+### The profile file
+
+The profiler profiles the last block of each fixture. That is the block an EEST blockchain test
+exercises, and the blocks before it only build the state it runs against. A fixture that holds
+several tests gives one entry per test.
+
+Each entry carries the cost, keyed by the kinds that zkVM charges for, and the `total` they sum to.
+On a zkVM whose backend reads the heap, the entry also carries `peak_heap_bytes`. The profiler leaves
+that field out where it read no heap.
+
+A block the guest did not get through goes under `failures` with the reason the backend gave. A run
+that failed on nothing writes no `failures` key at all.
+
+The meta names the guest, the exact binary, the corpus and the kinds the cost splits into, so a
+reader needs nothing else.
 
 ```json
 {
@@ -106,17 +147,18 @@ kinds the cost map decomposes into, so nothing else has to be read to interpret 
 }
 ```
 
-Blocks are profiled in parallel over rayon's global pool, which by default fills every core. A
-profiled execution holds the whole guest memory, so cap the pool on a machine with many cores and
-little memory.
+### Parallel execution
+
+The profiler runs blocks in parallel over the rayon global pool, which fills every core. One profiled
+execution holds the whole guest memory. On a machine with many cores and little memory, cap the pool.
 
 ```sh
 RAYON_NUM_THREADS=8 zkevm-prof profile --zkvm openvm ...
 ```
 
-Progress and failures go to stderr, and whatever a backend prints on either stream while it runs is
-dropped. A failed block is reported and recorded under `failures`, the run prints how many blocks it
-got through, and the command fails only when every block failed.
+Progress and failures go to stderr. The profiler drops whatever a backend prints while it runs. It
+reports each failed block, records it under `failures`, and prints how many blocks it got through.
+The command fails only when every block failed.
 
 ## Cost
 
@@ -128,10 +170,10 @@ got through, and the command fails only when every block failed.
 
 ### OpenVM
 
-The cost unit is trace cells, and split into `precompile` and `rv64`.
+The cost unit is trace cells. It splits into two kinds.
 
-- `precompile` - the accelerator extensions.
-- `rv64` - the RISC-V instructions.
+- `precompile` is the accelerator extensions.
+- `rv64` is the RISC-V instructions.
 
 #### Source
 
@@ -139,12 +181,12 @@ The cost unit is trace cells, and split into `precompile` and `rv64`.
 
 ### SP1
 
-The cost unit is gas, which weighs trace cells against the constraints the AIRs evaluate, and split
-into `syscall`, `system` and `opcode`.
+The cost unit is gas. Gas weighs trace cells against the constraints the AIRs evaluate. It splits
+into three kinds.
 
-- `syscall` - the accelerator chips invoked by syscalls.
-- `system` - the memory chips and the global bus.
-- `opcode` - the RISC-V instructions.
+- `syscall` is the accelerator chips that syscalls invoke.
+- `system` is the memory chips and the global bus.
+- `opcode` is the RISC-V instructions.
 
 #### Source
 
@@ -154,13 +196,13 @@ into `syscall`, `system` and `opcode`.
 
 ### ZisK
 
-The cost unit is trace cells, and split into `base`, `precompile`, `memory`, `opcode` and `main`.
+The cost unit is trace cells. It splits into five kinds.
 
-- `base` - the ROM and the lookup tables at their fixed heights.
-- `precompile` - the precompiles.
-- `memory` - the memory operations.
-- `opcode` - the ZisK instructions.
-- `main` - the processor itself, one row per step.
+- `base` is the ROM and the lookup tables at their fixed heights.
+- `precompile` is the precompiles.
+- `memory` is the memory operations.
+- `opcode` is the ZisK instructions.
+- `main` is the processor itself, one row per step.
 
 #### Source
 
@@ -170,23 +212,29 @@ The cost unit is trace cells, and split into `base`, `precompile`, `memory`, `op
 
 ## Peak heap
 
-The span between the outermost bytes a guest left non-zero in its heap. Guest memory starts zeroed and
-an allocator does not zero what it frees, so a non-zero byte is one the guest reached, and a span
-reads the same whether the allocator grows up or down.
+Peak heap is the span between the outermost bytes a guest left non-zero in its heap. Guest memory
+starts at zero, and an allocator does not zero what it frees. A non-zero byte is therefore a byte the
+guest reached. The span reads the same whether the allocator grows up or down.
 
-- OpenVM - `_end` to the end of the address space.
-- SP1 - `_end` to the input region above it.
-- ZisK - `_heap_bottom` to `_heap_top`.
+Each zkVM delimits the heap differently.
 
-The input buffer falls inside the reading only on OpenVM, which reads it into the guest's first
-allocation. SP1 and ZisK hand the guest a pointer to a region outside the heap.
+- OpenVM runs from `_end` to the end of the address space.
+- SP1 runs from `_end` to the input region above it.
+- ZisK runs from `_heap_bottom` to `_heap_top`.
 
-Two things move the figure. The allocator a toolchain links dominates any comparison across zkVMs,
-since one that never reuses memory holds everything ever allocated where one that recycles holds only
-its arena's peak. Memory an allocator reserved but never touched is invisible, so a guest that bumps
-its cursor over pages it never writes reads lower than its allocator would claim.
+The input buffer falls inside the reading on OpenVM only, which reads the input into the guest's
+first allocation. SP1 and ZisK give the guest a pointer to a region outside the heap.
 
-SP1 is read differently. Its heap spans 110 GiB of address space, too wide to slice, so the backend
-reads the memfd its JIT runs the guest against. A page the guest never reached is a hole the file
-never materialises, which makes the reading page granular where the others are byte exact. That JIT
-exists only on x86_64 Linux, so a build for any other target records no heap on SP1.
+### What peak heap does not show
+
+The allocator the toolchain links dominates any comparison across zkVMs. An allocator that never
+reuses memory holds everything it ever allocated. One that recycles holds only the peak of its arena.
+
+Memory that an allocator reserved but never touched is invisible. A guest that moves its cursor over
+pages it never writes therefore reads lower than its allocator claims.
+
+SP1 is read differently. Its heap spans 110 GiB of address space, which is too wide to slice. The
+backend therefore reads the memfd that the JIT runs the guest against. A page the guest never reached
+is a hole, and the file never materialises it. The reading is therefore page granular, where the
+others are byte exact. The JIT exists on x86_64 Linux only, so a build for any other target records
+no heap on SP1.

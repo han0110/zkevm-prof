@@ -32,7 +32,7 @@ const FIXTURES_DIR: &str = "fixtures";
 const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
 static SUITES: LazyLock<HashMap<String, Suite>> = LazyLock::new(|| {
-    serde_json::from_str(include_str!("../suite-registry.json"))
+    serde_json::from_str(include_str!("../../../suite-registry.json"))
         .expect("suite-registry.json is well formed")
 });
 

@@ -103,9 +103,10 @@ The profiler profiles the last block of each fixture. That is the block an EEST 
 exercises, and the blocks before it only build the state it runs against. A fixture that holds
 several tests gives one entry per test.
 
-Each entry carries the cost, keyed by the kinds that zkVM charges for, and the `total` they sum to.
-On a zkVM whose backend reads the heap, the entry also carries `peak_heap_bytes`. The profiler leaves
-that field out where it read no heap.
+Each entry carries the cost, keyed by the kinds that zkVM charges for. The kinds partition the
+execution, so the whole it cost is what they sum to and no key holds it. On a zkVM whose backend
+reads the heap, the entry also carries `peak_heap_bytes`. The profiler leaves that field out where it
+read no heap.
 
 A block the guest did not get through goes under `failures` with the reason the backend gave. A run
 that failed on nothing writes no `failures` key at all.
@@ -117,7 +118,7 @@ reader needs nothing else.
 {
   "profile": {
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
-      "cost": { "precompile": 7154852252, "rv64": 10994655178, "total": 18149507430 },
+      "cost": { "precompile": 7154852252, "rv64": 10994655178 },
       "peak_heap_bytes": 57531938,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }

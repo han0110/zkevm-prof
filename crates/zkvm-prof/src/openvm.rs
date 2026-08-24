@@ -27,26 +27,23 @@ use openvm_sdk_config::SdkVmConfig;
 use openvm_stark_sdk::config::{MAX_APP_LOG_STACKED_HEIGHT, app_params_with_100_bits_security};
 use openvm_transpiler::{elf::Elf, openvm_platform::memory::MEM_SIZE};
 
-use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler, heap_range, peak_heap_bytes};
+use crate::{Cost, Execution, Kind, Profiler, catching_panic, heap_range, peak_heap_bytes};
 
-/// Cost kinds that partition an OpenVM total, in stack order, and the kind holding the whole.
+/// Cost kinds that partition an OpenVM execution, in stack order.
 ///
 /// The split is between the work a guest buys by reaching for an accelerator and the work it does
 /// in the base instruction set, which is the comparison worth drawing across guests running the
 /// same block. Loads and stores stay under `rv64` because a guest cannot choose them away.
-pub const COMPOSITION: Composition = Composition {
-    total: "total",
-    components: &[
-        Kind {
-            name: PRECOMPILE,
-            note: "Precompiles",
-        },
-        Kind {
-            name: RV64,
-            note: "RISC-V instructions",
-        },
-    ],
-};
+pub const COMPOSITION: &[Kind] = &[
+    Kind {
+        name: PRECOMPILE,
+        note: "Precompiles",
+    },
+    Kind {
+        name: RV64,
+        note: "RISC-V instructions",
+    },
+];
 
 const PRECOMPILE: &str = "precompile";
 const RV64: &str = "rv64";
@@ -78,13 +75,13 @@ const UNCHARGED_AIRS: [&str; 8] = [
     "VmConnectorAir",
 ];
 
-/// Public values the benchmarked stateless validator guests expose, in bytes.
+/// Public values the VM reserves room for, in bytes. A guest revealing more than this does not run.
 const NUM_PUBLIC_VALUE_BYTES: usize = 256;
 
 /// Segmentation memory budget in bytes, which decides where segment boundaries fall.
 ///
 /// Metered cost prices instructions without segmenting, so this does not move the reported cost. It
-/// is set to what the proving cluster deploys so the configuration describes one machine.
+/// is set to what a proving machine holds so the configuration describes one machine.
 const SEGMENT_MAX_MEMORY: usize = 29 << 29; // 14.5 GiB
 
 /// Symbol the linker ends the guest image at, which `openvm_platform` starts the heap at.
@@ -130,7 +127,6 @@ impl OpenVMProfiler {
         let kinds: Vec<Option<&'static str>> = vm.air_names().map(kind).collect();
 
         let masked: Vec<(&'static str, Vec<usize>)> = COMPOSITION
-            .components
             .iter()
             .map(|component| {
                 let mask = ctx
@@ -171,7 +167,7 @@ impl OpenVMProfiler {
             .iter()
             .map(|(kind, mask)| Ok((*kind, compile(kind, mask)?)))
             .collect::<Result<Vec<_>>>()?;
-        let whole = compile(COMPOSITION.total, &ctx.widths)?;
+        let whole = compile("total", &ctx.widths)?;
 
         Ok(Self {
             whole,
@@ -214,12 +210,12 @@ impl OpenVMProfiler {
             .map_err(|error| anyhow!("failed to read the guest's heap: {error}"))?;
         Ok((ctx.cost, peak_heap_bytes(heap)))
     }
-}
 
-impl Profiler for OpenVMProfiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
+    /// Runs the guest once per kind and once more for the whole, which is what the kinds are then
+    /// checked against.
+    fn run(&self, input: &[u8]) -> Result<Execution> {
         let mut stdin = StdIn::default();
-        stdin.write_bytes(stateless_input);
+        stdin.write_bytes(input);
 
         let mut cost = Cost::new();
         for (kind, instance) in &self.priced {
@@ -232,15 +228,19 @@ impl Profiler for OpenVMProfiler {
         let summed: u64 = cost.values().sum();
         ensure!(
             summed == total,
-            "the kinds sum to {summed}, not the {} of {total}",
-            COMPOSITION.total
+            "the kinds sum to {summed}, not the total of {total}"
         );
-        cost.insert(COMPOSITION.total.to_owned(), total);
 
         Ok(Execution {
             cost,
             peak_heap_bytes,
         })
+    }
+}
+
+impl Profiler for OpenVMProfiler {
+    fn profile(&self, input: &[u8]) -> Result<Execution> {
+        catching_panic(|| self.run(input))
     }
 }
 
@@ -265,7 +265,7 @@ fn kind(air_name: &str) -> Option<&'static str> {
     }
 }
 
-/// The SDK configuration the benchmarked guests are built and proven against.
+/// The SDK configuration a guest is priced against.
 fn app_config() -> AppConfig<SdkVmConfig> {
     let mut vm_config = SdkVmConfig::standard();
     vm_config.system.config = vm_config
@@ -295,11 +295,10 @@ mod tests {
         let counts = AIR_NAMES.lines().fold([0; 3], |mut counts, air_name| {
             let index = match kind(air_name) {
                 Some(kind) => COMPOSITION
-                    .components
                     .iter()
                     .position(|component| component.name == kind)
                     .expect("every kind is a component"),
-                None => COMPOSITION.components.len(),
+                None => COMPOSITION.len(),
             };
             counts[index] += 1;
             counts

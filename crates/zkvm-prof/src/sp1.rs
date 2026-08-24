@@ -33,11 +33,11 @@ use sp1_core_executor::{
     SP1CoreOpts, TraceChunkRaw, get_complexity_mapping, rv64im_costs,
 };
 
-use crate::zkvm::{Composition, Cost, Execution, Kind, Profiler};
+use crate::{Cost, Execution, Kind, Profiler, catching_panic};
 
 #[cfg(sp1_jit_memory)]
 use {
-    crate::zkvm::heap_symbol,
+    crate::heap_symbol,
     anyhow::{Context, ensure},
     std::ops::Range,
 };
@@ -59,24 +59,21 @@ const HOST_PAGE: u64 = 4096;
 #[cfg(sp1_jit_memory)]
 const ANCHOR: usize = 64;
 
-/// Cost kinds that partition an SP1 total, in stack order, and the kind holding the whole.
-pub const COMPOSITION: Composition = Composition {
-    total: "total",
-    components: &[
-        Kind {
-            name: SYSCALL,
-            note: "Precompiles",
-        },
-        Kind {
-            name: SYSTEM,
-            note: "Memory and tables",
-        },
-        Kind {
-            name: OPCODE,
-            note: "RISC-V instructions",
-        },
-    ],
-};
+/// Cost kinds that partition an SP1 execution, in stack order.
+pub const COMPOSITION: &[Kind] = &[
+    Kind {
+        name: SYSCALL,
+        note: "Precompiles",
+    },
+    Kind {
+        name: SYSTEM,
+        note: "Memory and tables",
+    },
+    Kind {
+        name: OPCODE,
+        note: "RISC-V instructions",
+    },
+];
 
 /// Instructions the program runs.
 const OPCODE: &str = "opcode";
@@ -178,7 +175,7 @@ impl SP1Profiler {
     /// private field. Holding it here instead reaches the memory the guest ran against, and leaves
     /// the charging untouched, since the chunks and the program are the same either way.
     #[cfg(sp1_jit_memory)]
-    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>)> {
         use std::os::fd::AsRawFd;
 
         use memmap2::MmapMut;
@@ -193,9 +190,9 @@ impl SP1Profiler {
         );
         let mut jit: JitFunction<AnonymousMemory> = transpiler.transpile(&self.program);
         jit.with_initial_memory_image(self.program.memory_image.clone());
-        // SP1 hands the guest one input entry per read and these guests read once, so the stateless
-        // input goes in whole and carries no framing.
-        jit.push_input(stateless_input.to_vec());
+        // SP1 hands the guest one input entry per read and a guest that reads once takes the input
+        // whole, so it goes in carrying no framing.
+        jit.push_input(input.to_vec());
 
         let capacity = trace_capacity(Some(GAS_TRACE_CHUNK_THRESHOLD));
         let mut charges = Charges::default();
@@ -210,8 +207,7 @@ impl SP1Profiler {
             self.charge_chunk(&chunk, &mut charges)?;
         }
 
-        let peak_heap_bytes =
-            peak_heap_bytes(jit.memory.as_raw_fd(), self.heap_bottom, stateless_input)?;
+        let peak_heap_bytes = peak_heap_bytes(jit.memory.as_raw_fd(), self.heap_bottom, input)?;
         Ok((charges, peak_heap_bytes))
     }
 
@@ -219,7 +215,7 @@ impl SP1Profiler {
     ///
     /// Guest memory stays behind the executor here, so no heap is read.
     #[cfg(not(sp1_jit_memory))]
-    fn run(&self, stateless_input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>)> {
         use sp1_core_executor::MinimalExecutorEnum;
 
         let mut executor = MinimalExecutorEnum::new(
@@ -227,9 +223,9 @@ impl SP1Profiler {
             false,
             Some(GAS_TRACE_CHUNK_THRESHOLD),
         );
-        // SP1 hands the guest one input entry per read and these guests read once, so the stateless
-        // input goes in whole and carries no framing.
-        executor.with_input(stateless_input);
+        // SP1 hands the guest one input entry per read and a guest that reads once takes the input
+        // whole, so it goes in carrying no framing.
+        executor.with_input(input);
 
         let mut charges = Charges::default();
         while let Some(chunk) = executor
@@ -239,6 +235,31 @@ impl SP1Profiler {
             self.charge_chunk(&chunk, &mut charges)?;
         }
         Ok((charges, None))
+    }
+
+    /// Splits what the run charged into the kinds the program drove.
+    fn run(&self, input: &[u8]) -> Result<Execution> {
+        let (charges, peak_heap_bytes) = self.execute(input)?;
+        if charges.exit_code != 0 {
+            bail!("the guest exited with {}", charges.exit_code);
+        }
+
+        // Instructions are what the whole has left once the precompiles and the machine's own chips
+        // are taken out, which keeps the kinds summing to SP1's own figure rather than to a second
+        // reading of the same weights.
+        let cost = charges.cost;
+        let opcode = cost
+            .checked_sub(charges.syscall + charges.system)
+            .ok_or_else(|| anyhow!("the priced chips exceed the total of {cost}"))?;
+
+        Ok(Execution {
+            cost: Cost::from([
+                (OPCODE.to_owned(), opcode),
+                (SYSCALL.to_owned(), charges.syscall),
+                (SYSTEM.to_owned(), charges.system),
+            ]),
+            peak_heap_bytes,
+        })
     }
 }
 
@@ -251,7 +272,7 @@ impl SP1Profiler {
 /// nothing an allocator writes to cap its pool is counted, that landing in the page the input region
 /// opens with rather than in a region of its own.
 #[cfg(sp1_jit_memory)]
-fn peak_heap_bytes(memory: i32, heap_bottom: u64, stateless_input: &[u8]) -> Result<Option<u64>> {
+fn peak_heap_bytes(memory: i32, heap_bottom: u64, input: &[u8]) -> Result<Option<u64>> {
     // The file holds two host words per guest word, the clock it was last touched at and the guest's
     // own value, so a guest address reaches it doubled.
     let seek = |offset: u64, whence: i32| -> Result<Option<u64>> {
@@ -274,19 +295,19 @@ fn peak_heap_bytes(memory: i32, heap_bottom: u64, stateless_input: &[u8]) -> Res
         position = hole;
     }
 
-    let input = written
+    let region = written
         .pop()
         .context("the guest wrote nothing above its image, so it read no input")?;
     // The runtime opens its input region on a page and the input has to fit in what the region
     // holds, which leaves only the pages between its start and its end less that length to look on.
-    let padded = (stateless_input.len() as u64).next_multiple_of(8);
-    let last = input
+    let padded = (input.len() as u64).next_multiple_of(8);
+    let last = region
         .end
         .checked_sub(2 * padded)
-        .filter(|last| *last >= input.start)
+        .filter(|last| *last >= region.start)
         .context("the topmost region the guest wrote is shorter than the input it was handed")?;
-    let anchor = &stateless_input[..ANCHOR.min(stateless_input.len())];
-    let base = (input.start..=last)
+    let anchor = &input[..ANCHOR.min(input.len())];
+    let base = (region.start..=last)
         .step_by(HOST_PAGE as usize)
         .map(|at| head(memory, at).map(|head| (at, head)))
         .find_map(|read| match read {
@@ -301,10 +322,10 @@ fn peak_heap_bytes(memory: i32, heap_bottom: u64, stateless_input: &[u8]) -> Res
     // Only what an allocator writes to cap its pool separates the two, and it is excluded with the
     // page it lands on. More than that between them would be heap this reading then drops.
     ensure!(
-        base - input.start <= HOST_PAGE,
+        base - region.start <= HOST_PAGE,
         "the guest wrote {} bytes below its input, more than the page an allocator caps its pool \
          with, so the heap does not end where this reading splits it",
-        (base - input.start) / 2
+        (base - region.start) / 2
     );
 
     let (Some(first), Some(last)) = (written.first(), written.last()) else {
@@ -343,34 +364,8 @@ fn head(memory: i32, at: u64) -> Result<[u8; ANCHOR]> {
 }
 
 impl Profiler for SP1Profiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
-        let (charges, peak_heap_bytes) = self.run(stateless_input)?;
-        if charges.exit_code != 0 {
-            bail!("the guest exited with {}", charges.exit_code);
-        }
-
-        // Instructions are what the total has left once the precompiles and the machine's own chips
-        // are taken out, which keeps the parts summing to SP1's own figure rather than to a second
-        // reading of the same weights.
-        let cost = charges.cost;
-        let opcode = cost
-            .checked_sub(charges.syscall + charges.system)
-            .ok_or_else(|| {
-                anyhow!(
-                    "the priced chips exceed the {} of {cost}",
-                    COMPOSITION.total
-                )
-            })?;
-
-        Ok(Execution {
-            cost: Cost::from([
-                (OPCODE.to_owned(), opcode),
-                (SYSCALL.to_owned(), charges.syscall),
-                (SYSTEM.to_owned(), charges.system),
-                (COMPOSITION.total.to_owned(), cost),
-            ]),
-            peak_heap_bytes,
-        })
+    fn profile(&self, input: &[u8]) -> Result<Execution> {
+        catching_panic(|| self.run(input))
     }
 }
 

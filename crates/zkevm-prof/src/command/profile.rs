@@ -8,7 +8,6 @@ use std::{
     fs::{self, File},
     io::{BufWriter, Write, stderr},
     os::fd::AsFd,
-    panic::{AssertUnwindSafe, catch_unwind},
     path::{Path, PathBuf},
     str::FromStr,
     sync::{
@@ -24,17 +23,18 @@ use clap::{
     Parser,
     builder::{PossibleValuesParser, TypedValueParser},
 };
-use ere_catalog::zkVMKind;
 use gag::Gag;
 use rayon::prelude::*;
 use regex::Regex;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use zkvm_prof::{composition, profiler, zkVMKind};
 
 use crate::{
     command::{now, run_url},
-    fixture, registry,
-    zkvm::{self, Entry, Execution, Failure, Meta, Profile, Profiler, profiler},
+    fixture,
+    profile::{Entry, Failure, Meta, Profile},
+    registry,
 };
 
 /// Digits of the ELF hash a published profile is filed under.
@@ -61,26 +61,6 @@ struct Published<'a> {
     elf_url: Option<&'a str>,
     elf_sha256: &'a str,
     stateless_validator_version: &'a str,
-}
-
-/// Profiles one block, turning a panic inside the backend into an error.
-///
-/// A guest that breaks a zkVM invariant aborts the emulator by panicking rather than by returning,
-/// and rayon re-raises a worker's panic on the thread collecting the results, which would discard a
-/// whole corpus over one bad block. Backends carry no state from one block to the next, so a caught
-/// panic leaves nothing inconsistent behind.
-fn profile_block(profiler: &dyn Profiler, stateless_input: &[u8]) -> Result<Execution> {
-    match catch_unwind(AssertUnwindSafe(|| profiler.profile(stateless_input))) {
-        Ok(result) => result,
-        Err(panic) => {
-            let message = panic
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic.downcast_ref::<&str>().copied())
-                .unwrap_or("the backend panicked");
-            bail!("{}", message.trim())
-        }
-    }
 }
 
 /// Profiles one guest on one zkVM over a fixture corpus.
@@ -268,11 +248,7 @@ impl ProfileCmd {
                 suite,
                 generated_at: now(),
                 run_url: run_url(),
-                composition: zkvm::composition(self.zkvm)?
-                    .components
-                    .iter()
-                    .map(Into::into)
-                    .collect(),
+                composition: composition(self.zkvm)?.iter().map(Into::into).collect(),
             },
         };
         let (sender, receiver) = mpsc::channel();
@@ -312,7 +288,7 @@ impl ProfileCmd {
                     }
                 })
                 .try_for_each(|fixture| {
-                    let result = profile_block(profiler.as_ref(), &fixture.stateless_input);
+                    let result = profiler.profile(&fixture.stateless_input);
                     // Counts blocks rather than files, since a fixture file may hold several tests.
                     let done = done.fetch_add(1, Ordering::Relaxed) + 1;
                     let outcome = match result {
@@ -553,30 +529,12 @@ fn write(path: &Path, profile: &Profile) -> Result<()> {
 mod tests {
     use std::{env, fs, path::PathBuf};
 
-    use ere_catalog::zkVMKind;
+    use zkvm_prof::zkVMKind;
 
     use crate::{
-        command::profile::{
-            Execution, Profiler, Published, Result, checkpoint, profile_block, published, resumed,
-            write,
-        },
-        zkvm::Profile,
+        command::profile::{Published, checkpoint, published, resumed, write},
+        profile::Profile,
     };
-
-    struct Panicking;
-
-    impl Profiler for Panicking {
-        fn profile(&self, _: &[u8]) -> Result<Execution> {
-            panic!("the guest hit an unaligned operand")
-        }
-    }
-
-    /// One block that aborts the emulator must not discard the corpus around it.
-    #[test]
-    fn a_panicking_backend_becomes_an_error() {
-        let error = profile_block(&Panicking, &[]).unwrap_err();
-        assert!(error.to_string().contains("unaligned operand"));
-    }
 
     /// A directory to write a profile into, since what a path offers a run is read off the file
     /// sitting at it rather than worked out from the name.

@@ -9688,13 +9688,8 @@ dependencies = [
  "anyhow",
  "cargo_metadata 0.23.1",
  "clap",
- "elf",
- "enum-map",
- "ere-catalog",
  "gag",
  "hex",
- "libc",
- "memmap2",
  "openvm-sdk",
  "openvm-sdk-config",
  "openvm-stark-sdk",
@@ -9705,17 +9700,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "sp1-core-executor",
- "sp1-jit",
- "sp1-primitives",
  "stateless-validator-catalog",
  "stateless-validator-downloader",
  "tokio",
  "walkdir",
- "zisk-common",
- "zisk-core",
- "zisk-transpiler-riscv",
- "ziskemu",
+ "zkvm-prof",
 ]
 
 [[package]]
@@ -9743,6 +9732,30 @@ dependencies = [
  "sha2",
  "sha3 0.10.9",
  "subtle",
+]
+
+[[package]]
+name = "zkvm-prof"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "elf",
+ "enum-map",
+ "ere-catalog",
+ "libc",
+ "memmap2",
+ "openvm-sdk",
+ "openvm-sdk-config",
+ "openvm-stark-sdk",
+ "openvm-transpiler",
+ "serde",
+ "sp1-core-executor",
+ "sp1-jit",
+ "sp1-primitives",
+ "zisk-common",
+ "zisk-core",
+ "zisk-transpiler-riscv",
+ "ziskemu",
 ]
 
 [[package]]

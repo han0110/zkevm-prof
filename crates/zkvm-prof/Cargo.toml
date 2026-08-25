@@ -1,0 +1,36 @@
+[package]
+name = "zkvm-prof"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow = "1"
+elf = "0.7"
+serde = { version = "1", features = ["derive"] }
+
+# ere
+ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.16.2" }
+
+# zisk
+zisk-common = "1.1.0-alpha"
+zisk-core = "1.1.0-alpha"
+zisk-transpiler-riscv = "1.1.0-alpha"
+ziskemu = "1.1.0-alpha"
+
+# openvm
+openvm-sdk.workspace = true
+openvm-sdk-config.workspace = true
+openvm-stark-sdk.workspace = true
+openvm-transpiler.workspace = true
+
+# sp1
+enum-map = "2"
+sp1-core-executor = "6.4.0"
+sp1-primitives = "6.4.0"
+
+# sp1, on the target its executor compiles a native JIT for. Only there is guest memory a file the
+# backend can read the heap out of, so only there are the transpiler and its JIT driven directly.
+[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
+libc = "0.2"
+memmap2 = "0.9"
+sp1-jit = "6.4.0"

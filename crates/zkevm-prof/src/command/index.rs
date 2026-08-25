@@ -13,11 +13,11 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, ensure};
 use clap::Parser;
-use ere_catalog::zkVMKind;
 use serde::{Deserialize, Serialize, de::IgnoredAny};
 use walkdir::WalkDir;
+use zkvm_prof::{Component, zkVMKind};
 
-use crate::zkvm::{Component, Meta};
+use crate::profile::Meta;
 
 /// File the index is written to, which is the one file under the directory that is not a profile.
 const INDEX: &str = "index.json";

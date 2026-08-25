@@ -6,8 +6,8 @@
 
 mod command;
 mod fixture;
+mod profile;
 mod registry;
-mod zkvm;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand};

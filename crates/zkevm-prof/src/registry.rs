@@ -12,10 +12,10 @@ use std::{
 };
 
 use anyhow::{Context, Result, ensure};
-use ere_catalog::zkVMKind;
 use serde::Deserialize;
 use stateless_validator_catalog::StatelessValidatorKind;
 use stateless_validator_downloader::Downloader;
+use zkvm_prof::zkVMKind;
 
 /// ere-guests release the guests it builds are published in, absent unless the pin carries a tag.
 ///
@@ -37,7 +37,7 @@ const GITHUB_TOKEN: &str = "GITHUB_TOKEN";
 
 static REGISTRY: LazyLock<HashMap<zkVMKind, Vec<Elf>>> = LazyLock::new(|| {
     let registry: HashMap<zkVMKind, Vec<Elf>> =
-        serde_json::from_str(include_str!("../elf-registry.json"))
+        serde_json::from_str(include_str!("../../../elf-registry.json"))
             .expect("elf-registry.json is well formed");
     assert!(
         registry

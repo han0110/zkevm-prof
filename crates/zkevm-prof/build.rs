@@ -4,11 +4,6 @@
 //! A tag pin publishes the guests as release assets, while every other pin leaves them as the build
 //! artifacts of the commit it resolves to, and those are two different downloads, so the tag is
 //! passed on only when the pin carries one.
-//!
-//! It also mirrors the target test `sp1-core-executor` gates its native JIT on, since the SP1
-//! backend can only read guest memory where that JIT is the executor.
-
-use std::env;
 
 use cargo_metadata::MetadataCommand;
 
@@ -17,18 +12,7 @@ const ERE_GUESTS_PACKAGE: &str = "stateless-validator-catalog";
 
 fn main() {
     println!("cargo::rerun-if-changed=Cargo.toml");
-    println!("cargo::rerun-if-changed=Cargo.lock");
-    println!("cargo::rustc-check-cfg=cfg(sp1_jit_memory)");
-
-    // `sp1-core-executor` compiles its native JIT for this target, and only that JIT keeps guest
-    // memory in a file the SP1 backend can read the heap out of. Its own test also excludes two of
-    // its features, which a dependent cannot see, so enabling either fails this crate's build
-    // rather than quietly changing what it measures.
-    if env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("x86_64")
-        && env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("linux")
-    {
-        println!("cargo::rustc-cfg=sp1_jit_memory");
-    }
+    println!("cargo::rerun-if-changed=../../Cargo.lock");
 
     let metadata = MetadataCommand::new()
         .exec()

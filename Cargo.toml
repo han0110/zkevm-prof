@@ -1,53 +1,15 @@
-[package]
-name = "zkevm-prof"
+[workspace]
+resolver = "3"
+members = ["crates/zkevm-prof", "crates/zkvm-prof"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-elf = "0.7"
-gag = "1"
-hex = "0.4"
-rayon = "1"
-regex = "1"
-reqwest = "0.12"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-walkdir = "2"
-
-# zisk
-zisk-common = "1.1.0-alpha"
-zisk-core = "1.1.0-alpha"
-zisk-transpiler-riscv = "1.1.0-alpha"
-ziskemu = "1.1.0-alpha"
-
-# openvm
+# openvm, which the library prices with and `examples/air_rows.rs` drives directly, so the pin is
+# stated once rather than in each crate that reaches for it.
+[workspace.dependencies]
 openvm-sdk = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462", default-features = false, features = ["parallel", "rvr"] }
 openvm-sdk-config = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
 openvm-stark-sdk = { git = "https://github.com/han0110/stark-backend.git", branch = "patch/v2.1.0-preview" }
 openvm-transpiler = { git = "https://github.com/han0110/openvm.git", branch = "patch/39c8462" }
-
-# sp1
-enum-map = "2"
-sp1-core-executor = "6.4.0"
-sp1-primitives = "6.4.0"
-
-# ere
-ere-catalog = { git = "https://github.com/eth-act/ere", tag = "v0.16.2" }
-
-# ere-guests
-stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
-stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
-
-# sp1, on the target its executor compiles a native JIT for. Only there is guest memory a file the
-# backend can read the heap out of, so only there are the transpiler and its JIT driven directly.
-[target.'cfg(all(target_arch = "x86_64", target_os = "linux"))'.dependencies]
-libc = "0.2"
-memmap2 = "0.9"
-sp1-jit = "6.4.0"
-
-[build-dependencies]
-cargo_metadata = "0.23"

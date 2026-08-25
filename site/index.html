@@ -1146,11 +1146,21 @@ function sharedFixtures(runs) {
   return first.filter((name) => held.every((names) => names.has(name))).sort();
 }
 
+/* The whole a cost map comes to. The kinds partition an execution, so the whole is what they sum to.
+   A profile written while the whole was also recorded carries it under `total` beside the kinds it
+   sums to, and a key that comes to exactly that is the one to leave out rather than add in, which is
+   what tells it from a kind a zkVM happens to have named `total`. */
+function costTotal(cost) {
+  const kinds = Object.entries(cost).filter(([name]) => name !== 'total');
+  const summed = kinds.reduce((sum, [, value]) => sum + value, 0);
+  return cost.total === summed ? summed : summed + (cost.total ?? 0);
+}
+
 /* Corpus sums over the shared fixtures, and the per fixture and mean figures taken off them. A
    ratio is left to the point of display, where the set of runs it is stated against is known. */
 function statistics(run, fixtures) {
   const entries = fixtures.map((name) => run.profile[name]);
-  const total = entries.reduce((sum, entry) => sum + entry.cost.total, 0);
+  const total = entries.reduce((sum, entry) => sum + costTotal(entry.cost), 0);
   const heaps = entries.filter((entry) => entry.peak_heap_bytes != null);
   const point = (name, value) => [
     run.profile[name].metadata.gas_used,
@@ -1171,7 +1181,7 @@ function statistics(run, fixtures) {
     peakHeapMean: heaps.length
       ? heaps.reduce((sum, entry) => sum + entry.peak_heap_bytes, 0) / heaps.length
       : null,
-    points: fixtures.map((name) => point(name, run.profile[name].cost.total)).sort(byGas),
+    points: fixtures.map((name) => point(name, costTotal(run.profile[name].cost))).sort(byGas),
     heapPoints: fixtures
       .filter((name) => run.profile[name].peak_heap_bytes != null)
       .map((name) => point(name, run.profile[name].peak_heap_bytes))
@@ -3691,7 +3701,7 @@ function ProvingPanel({ entry, run, fixtures }) {
       .filter((name) => times[name] != null)
       .map((name) => {
         const { cost, metadata } = run.profile[name];
-        return [cost.total, times[name], metadata.block_number, name, metadata.gas_used];
+        return [costTotal(cost), times[name], metadata.block_number, name, metadata.gas_used];
       })
       .sort((left, right) => left[0] - right[0]);
   }, [state.value, fixtures, run]);
@@ -3838,7 +3848,7 @@ function ProvingPanel({ entry, run, fixtures }) {
 
 /* The figures a block carries, either of which a comparison of them is read by. */
 const BLOCK_VALUES = [
-  { key: 'cost', label: 'Cost', of: (block) => block.cost.total, format: si },
+  { key: 'cost', label: 'Cost', of: (block) => costTotal(block.cost), format: si },
   { key: 'heap', label: 'Peak heap', of: (block) => block.peak_heap_bytes ?? null, format: bytes },
 ];
 
@@ -4141,7 +4151,7 @@ function RunView({ entry, run, fixtures, figures, size }) {
         kind: RANGE,
         key: 'total',
         label: 'Cost',
-        of: (name) => cost(name).total,
+        of: (name) => costTotal(cost(name)),
         print: si,
         presets: () => [95, 99],
       },
@@ -4157,7 +4167,7 @@ function RunView({ entry, run, fixtures, figures, size }) {
           kind: RANGE,
           key: 'share:' + kind.name,
           label: kind.name + ' share',
-          of: (name) => cost(name)[kind.name] / cost(name).total,
+          of: (name) => cost(name)[kind.name] / costTotal(cost(name)),
           print: percent,
         },
       ]),
@@ -4222,14 +4232,14 @@ function RunView({ entry, run, fixtures, figures, size }) {
         ${shares ? 'Show cost' : 'Show percentage'}
       <//>`}
       columns=${[
-        figureColumn('total', 'Cost', (name) => cost(name).total, si),
+        figureColumn('total', 'Cost', (name) => costTotal(cost(name)), si),
         // Keyed apart from the fixed columns, since a zkVM is free to call one of its kinds `total`.
         ...entry.composition.map((kind) =>
           figureColumn(
             'kind:' + kind.name,
             kind.name,
             (name) =>
-              shares ? cost(name)[kind.name] / cost(name).total : cost(name)[kind.name],
+              shares ? cost(name)[kind.name] / costTotal(cost(name)) : cost(name)[kind.name],
             shares ? percent : si
           )
         ),

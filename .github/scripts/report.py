@@ -75,19 +75,20 @@ def series(document, shared, kinds):
         missing = [kind for kind in kinds if kind not in cost]
         if missing:
             raise SystemExit(f"{label}/{name} has no {' or '.join(missing)} cost")
-        # A stacked bar that does not reach its own total would misstate every share it draws. Costs
-        # are whole numbers of cells, so the parts either add up or they do not.
-        summed = sum(cost[kind] for kind in kinds)
-        if kinds and summed != cost["total"]:
+        # The kinds partition an execution, so the whole is what they sum to. A cost carrying a key
+        # the composition leaves unnamed would put part of that whole under no bar, which is what
+        # would misstate every share the stack draws.
+        unnamed = [key for key in sorted(cost) if key not in kinds]
+        if kinds and unnamed:
             raise SystemExit(
-                f"{label}/{name} costs {summed} across its kinds, not the total of {cost['total']}"
+                f"{label}/{name} carries {' and '.join(unnamed)} beyond the kinds it splits into"
             )
     peaks = [block["peak_heap_bytes"] for block in blocks if "peak_heap_bytes" in block]
     return {
         "label": label,
         "version": meta["stateless_validator_version"],
         "sha256": short_sha256(meta["elf_sha256"]),
-        "total": sum(block["cost"]["total"] for block in blocks),
+        "total": sum(sum(block["cost"].values()) for block in blocks),
         "components": [sum(block["cost"][kind] for block in blocks) for kind in kinds],
         # A mean rather than the largest, since one figure per guest is there to compare how much
         # memory the corpus takes them rather than to size a machine for their worst block.

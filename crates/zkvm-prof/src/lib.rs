@@ -1,23 +1,31 @@
-//! Per-zkVM profiling backends.
+//! Prices one execution of a guest on a zkVM.
 //!
-//! A zkVM contributes one module implementing [`Profiler`]. The cost it reports is an open map of
-//! whatever kinds that zkVM charges for, so adding a backend needs no change to the fixture
-//! walking, the output format or the report.
+//! A zkVM contributes one module implementing [`Profiler`], which takes a guest ELF once and runs it
+//! over any number of inputs. Both are opaque bytes, so nothing here knows what a guest computes or
+//! what it is handed. The cost a run reports is an open map of whatever kinds that zkVM charges for,
+//! and [`composition`] names those kinds in the order a chart stacks them.
 
 pub mod openvm;
 pub mod sp1;
 pub mod zisk;
 
-use std::{collections::BTreeMap, ops::Range};
+use std::{
+    collections::BTreeMap,
+    ops::Range,
+    panic::{AssertUnwindSafe, catch_unwind},
+};
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Context, Result, anyhow, bail, ensure};
 use elf::{ElfBytes, endian::AnyEndian};
-use ere_catalog::zkVMKind;
 use serde::{Deserialize, Serialize};
 
-use crate::fixture::Metadata;
+pub use ere_catalog::zkVMKind;
 
 /// Cost of one execution, keyed by the cost kinds the zkVM defines.
+///
+/// The kinds partition the execution, so they sum to what the whole of it cost and no key holds that
+/// whole. A backend that prices an execution one way and splits it another checks the two against
+/// each other before returning, which is what makes the sum the zkVM's own figure.
 pub type Cost = BTreeMap<String, u64>;
 
 /// What one execution of a guest cost, and the heap it used.
@@ -92,19 +100,7 @@ pub fn symbol_address(elf: &[u8], name: &str) -> Result<Option<u64>> {
         .map(|symbol| symbol.st_value))
 }
 
-/// How a zkVM's cost map decomposes into parts of a whole.
-///
-/// Each backend declares its own next to the profiler that fills the map, so the report stacks
-/// whatever that zkVM charges for without knowing anything about it.
-pub struct Composition {
-    /// Kind holding the whole.
-    pub total: &'static str,
-    /// Kinds partitioning the total, in stack order. Empty when the zkVM prices an execution as one
-    /// number, which leaves the total nothing to be split into.
-    pub components: &'static [Kind],
-}
-
-/// One kind a total splits into, with the note the report prints under the chart.
+/// One kind a cost splits into, with the note a report prints under the chart.
 pub struct Kind {
     /// Key the cost map records the kind under.
     pub name: &'static str,
@@ -112,8 +108,8 @@ pub struct Kind {
     pub note: &'static str,
 }
 
-/// One kind as a profile carries it, so a reader of the document needs nothing else to stack a cost
-/// map it has never seen.
+/// One kind in the form a document carries it, so a reader of that document needs nothing else to
+/// stack a cost map it has never seen.
 #[derive(Deserialize, Serialize)]
 pub struct Component {
     pub name: String,
@@ -129,12 +125,15 @@ impl From<&Kind> for Component {
     }
 }
 
-/// The composition of the zkVM that produced a profile.
-pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
+/// The kinds the zkVM that produced a profile splits a cost into, in stack order.
+///
+/// Each backend declares its own next to the profiler that fills the map, so a caller stacks
+/// whatever that zkVM charges for without knowing anything about it.
+pub fn composition(zkvm: zkVMKind) -> Result<&'static [Kind]> {
     match zkvm {
-        zkVMKind::OpenVM => Ok(&openvm::COMPOSITION),
-        zkVMKind::SP1 => Ok(&sp1::COMPOSITION),
-        zkVMKind::Zisk => Ok(&zisk::COMPOSITION),
+        zkVMKind::OpenVM => Ok(openvm::COMPOSITION),
+        zkVMKind::SP1 => Ok(sp1::COMPOSITION),
+        zkVMKind::Zisk => Ok(zisk::COMPOSITION),
     }
 }
 
@@ -143,7 +142,30 @@ pub fn composition(zkvm: zkVMKind) -> Result<&'static Composition> {
 /// A backend is constructed once per guest ELF, so whatever it derives from the ELF (a transpiled
 /// ROM, a compiled shared library) is paid for once and shared across the whole corpus.
 pub trait Profiler: Sync {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Execution>;
+    /// Prices one execution of the guest over `input`.
+    ///
+    /// A guest that breaks a zkVM invariant panics rather than returning, and a backend catches that
+    /// and reports it as the error it is, so one bad input costs a caller that input and no more.
+    fn profile(&self, input: &[u8]) -> Result<Execution>;
+}
+
+/// Runs `profile`, turning a panic inside a backend into an error.
+///
+/// A guest that breaks a zkVM invariant aborts the emulator by panicking rather than by returning,
+/// which would otherwise discard a whole corpus over one bad input. A backend carries no state from
+/// one input to the next, so a caught panic leaves nothing inconsistent behind.
+fn catching_panic(profile: impl FnOnce() -> Result<Execution>) -> Result<Execution> {
+    match catch_unwind(AssertUnwindSafe(profile)) {
+        Ok(result) => result,
+        Err(panic) => {
+            let message = panic
+                .downcast_ref::<String>()
+                .map(String::as_str)
+                .or_else(|| panic.downcast_ref::<&str>().copied())
+                .unwrap_or("the backend panicked");
+            bail!("{}", message.trim())
+        }
+    }
 }
 
 pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
@@ -154,89 +176,15 @@ pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
     }
 }
 
-/// Profile document, as written to the output JSON.
-#[derive(Deserialize, Serialize)]
-pub struct Profile {
-    pub profile: BTreeMap<String, Entry>,
-    /// Blocks the guest failed on, which are what the profile is short of the corpus by. Empty for
-    /// a run that profiled every block it was given, and absent from a profile written before
-    /// failures were recorded.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub failures: BTreeMap<String, Failure>,
-    pub meta: Meta,
-}
-
-/// What produced a profile, which is how the report knows a cost map's shape.
-#[derive(Deserialize, Serialize)]
-pub struct Meta {
-    /// Harness that measured the run, which stands for everything a cost depends on that the rest of
-    /// this does not name, the zkVM SDK the crate links included.
-    pub version: String,
-    pub zkvm: zkVMKind,
-    /// zkVM SDK the guest was built against, as the ere catalog names it.
-    pub zkvm_version: String,
-    /// Stateless validator the profile is of.
-    pub stateless_validator: String,
-    /// Version of that guest, as the registry resolves it.
-    pub stateless_validator_version: String,
-    /// Where the profiled ELF is published, absent when it was handed over directly or built as an
-    /// artifact the GitHub API serves under no stable URL.
-    #[serde(default)]
-    pub elf_url: Option<String>,
-    /// SHA-256 of the profiled ELF, absent for a profile written before the hash was recorded.
-    #[serde(default)]
-    pub elf_sha256: Option<String>,
-    /// Fixture corpus the guest was profiled over, as `suite-registry.json` names it.
-    #[serde(default)]
-    pub suite: String,
-    /// Wall clock time a run is stamped with, in seconds since the epoch.
-    #[serde(default)]
-    pub generated_at: u64,
-    /// Link to the workflow run that produced the profile, absent for a local run.
-    #[serde(default)]
-    pub run_url: Option<String>,
-    /// Kinds the cost map decomposes into, in stack order.
-    #[serde(default)]
-    pub composition: Vec<Component>,
-}
-
-/// One profiled block.
-#[derive(Deserialize, Serialize)]
-pub struct Entry {
-    pub cost: Cost,
-    /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
-    /// left its heap untouched.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub peak_heap_bytes: Option<u64>,
-    pub metadata: Metadata,
-}
-
-/// One block the guest did not get through, carried alongside the ones it did so that a profile
-/// short of its corpus says which blocks it is short of and why.
-#[derive(Deserialize, Serialize)]
-pub struct Failure {
-    /// What the backend reported, which is the guest's own error or the panic that aborted the
-    /// emulator.
-    pub reason: String,
-    pub metadata: Metadata,
-}
-
 #[cfg(test)]
 mod tests {
-    use crate::zkvm::{Profile, peak_heap_bytes};
+    use crate::{catching_panic, peak_heap_bytes};
 
-    /// Every profile published before failures were recorded carries no `failures` key, and the
-    /// page still has to be able to load one.
+    /// One input that aborts the emulator must not discard the corpus around it.
     #[test]
-    fn a_profile_without_failures_parses() {
-        let document = r#"{"profile":{},"meta":{"version":"0.1.0","zkvm":"zisk",
-            "zkvm_version":"v1.0.0-alpha","stateless_validator":"reth",
-            "stateless_validator_version":"f804dc1"}}"#;
-        let profile: Profile = serde_json::from_str(document).unwrap();
-        assert!(profile.failures.is_empty());
-        // A run that failed on nothing writes no key either, so the two read alike.
-        let written = serde_json::to_string(&profile).unwrap();
-        assert!(!written.contains("failures"));
+    fn a_panicking_backend_becomes_an_error() {
+        let error = catching_panic(|| panic!("the guest hit an unaligned operand")).unwrap_err();
+        assert!(error.to_string().contains("unaligned operand"));
     }
 
     /// A heap handed out from the bottom up and the same heap handed out from the top down read

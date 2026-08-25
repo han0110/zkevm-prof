@@ -16,48 +16,45 @@ use zisk_core::{RAM_ADDR, RAM_SIZE, ZiskRom};
 use zisk_transpiler_riscv::Riscv2zisk;
 use ziskemu::{Emu, EmuOptions};
 
-use crate::zkvm::{
-    Composition, Cost, Execution, Kind, Profiler, heap_range, peak_heap_bytes, symbol_address,
+use crate::{
+    Cost, Execution, Kind, Profiler, catching_panic, heap_range, peak_heap_bytes, symbol_address,
 };
 
-/// Cost kinds that partition a ZisK total, in stack order, and the kind holding the whole.
+/// Row the emulator's report holds the whole under, which the kinds are checked against.
+const TOTAL: &str = "total";
+
+/// Cost kinds that partition a ZisK execution, in stack order.
 ///
-/// These name the only rows read out of the emulator's report. `VARIABLE` is skipped because it is
-/// `TOTAL` less `BASE`, `FROPS` because the emulator prices those instructions into an accumulator
-/// of their own that `TOTAL` never sums, and `STEPS` because it counts work rather than pricing it.
-pub const COMPOSITION: Composition = Composition {
-    total: "total",
-    components: &[
-        Kind {
-            name: "base",
-            note: "ROM and tables",
-        },
-        Kind {
-            name: "precompile",
-            note: "Precompiles",
-        },
-        Kind {
-            name: "memory",
-            note: "Memory",
-        },
-        Kind {
-            name: "opcode",
-            note: "ZisK instructions",
-        },
-        Kind {
-            name: "main",
-            note: "Main",
-        },
-    ],
-};
+/// These and the `TOTAL` they are checked against name the only rows read out of the emulator's
+/// report. `VARIABLE` is skipped because it is `TOTAL` less `BASE`, `FROPS` because the emulator
+/// prices those instructions into an accumulator of their own that `TOTAL` never sums, and `STEPS`
+/// because it counts work rather than pricing it.
+pub const COMPOSITION: &[Kind] = &[
+    Kind {
+        name: "base",
+        note: "ROM and tables",
+    },
+    Kind {
+        name: "precompile",
+        note: "Precompiles",
+    },
+    Kind {
+        name: "memory",
+        note: "Memory",
+    },
+    Kind {
+        name: "opcode",
+        note: "ZisK instructions",
+    },
+    Kind {
+        name: "main",
+        note: "Main",
+    },
+];
 
-/// The kinds [`COMPOSITION`] names, which are the ones worth reading out of the report.
+/// The rows worth reading out of the report, which are the kinds and the whole they sum to.
 fn kinds() -> impl Iterator<Item = &'static str> {
-    COMPOSITION
-        .components
-        .iter()
-        .map(|kind| kind.name)
-        .chain([COMPOSITION.total])
+    COMPOSITION.iter().map(|kind| kind.name).chain([TOTAL])
 }
 
 /// Row the emulator's report prints `kind` under.
@@ -122,21 +119,16 @@ impl ZiskProfiler {
         );
         Ok(Self { rom, heap })
     }
-}
 
-impl Profiler for ZiskProfiler {
-    fn profile(&self, stateless_input: &[u8]) -> Result<Execution> {
+    /// Runs the guest and reads its cost and heap out of the emulator the run leaves behind.
+    fn run(&self, input: &[u8]) -> Result<Execution> {
         let options = EmuOptions {
             stats: true,
             ..Default::default()
         };
         let mut emu = Emu::new(&self.rom);
         // The emulator prints this same report to stdout, which the caller silences.
-        emu.run(
-            frame(stateless_input),
-            &options,
-            None::<Box<dyn Fn(EmuTrace)>>,
-        );
+        emu.run(frame(input), &options, None::<Box<dyn Fn(EmuTrace)>>);
         if !emu.terminated() {
             bail!("emulation did not reach the end of the program");
         }
@@ -152,6 +144,12 @@ impl Profiler for ZiskProfiler {
             cost,
             peak_heap_bytes: peak_heap_bytes(heap),
         })
+    }
+}
+
+impl Profiler for ZiskProfiler {
+    fn profile(&self, input: &[u8]) -> Result<Execution> {
+        catching_panic(|| self.run(input))
     }
 }
 
@@ -196,17 +194,15 @@ fn parse(report: &str) -> Result<Cost> {
 
     // ZisK computes the total as exactly this sum, so parts that fall short of it mean the summary
     // block was misread rather than that the emulator disagrees with itself.
-    let summed: u64 = COMPOSITION
-        .components
-        .iter()
-        .map(|kind| cost[kind.name])
-        .sum();
-    let total = cost[COMPOSITION.total];
+    let summed: u64 = COMPOSITION.iter().map(|kind| cost[kind.name]).sum();
+    let total = cost[TOTAL];
     ensure!(
         summed == total,
-        "the report's components sum to {summed}, not the {} of {total}",
-        COMPOSITION.total
+        "the report's components sum to {summed}, not the {TOTAL} of {total}"
     );
+    // The kinds partition the execution, so the whole is what they sum to rather than a kind of its
+    // own, and the row that was read to check them is dropped once it has been checked.
+    cost.remove(TOTAL);
 
     Ok(cost)
 }
@@ -239,9 +235,10 @@ mod tests {
         assert_eq!(cost["precompile"], 1947067046);
         assert_eq!(cost["memory"], 766637533);
         assert_eq!(cost["base"], 293601280);
-        assert_eq!(cost["total"], 10185334731);
-        // Rows that are derived, priced apart from the total, or not costs at all stay out.
-        for skipped in ["variable", "frops", "steps"] {
+        // The kinds sum to the whole, which is checked against the report and then left out.
+        assert_eq!(cost.values().sum::<u64>(), 10185334731);
+        // Rows that are derived, priced apart from the whole, or not costs at all stay out.
+        for skipped in ["total", "variable", "frops", "steps"] {
             assert!(!cost.contains_key(skipped), "{skipped} was recorded");
         }
     }

@@ -574,6 +574,10 @@ input:focus-visible,
   --table-height: 70vh;
 
   overflow: auto;
+
+  /* The rows a window holds are swapped as it scrolls, which the browser would otherwise read as
+     content moving under the reader and correct for. */
+  overflow-anchor: none;
 }
 
 .table-wrap.capped {
@@ -713,8 +717,15 @@ input:focus-visible,
   transition: background-color 150ms;
 }
 
-.data-table tbody tr:hover {
+.data-table tbody tr:not(.window-gap):hover {
   background: color-mix(in oklab, var(--elevated) 40%, transparent);
+}
+
+/* A gap stands for the rows a window leaves out, so it draws none of what a row draws. The two
+   classes are what carry it past the cell rule above. */
+.data-table .window-gap td {
+  padding: 0;
+  border: 0;
 }
 
 .row-selected {
@@ -1038,6 +1049,9 @@ async function json(path, missing) {
 
 /* What a run is called in a route, which is when it was taken and what it profiled. */
 const runId = (run) => run.generated_at + '-' + run.stateless_validator + '-' + run.zkvm;
+
+/* An index entry is named by the run it lists. */
+const runIdOf = (entry) => entry.runId;
 
 /* Where a run's profile sits, which is the guest, the ELF it measured and the corpus it covers. The
    index names those rather than the path they compose, a path reading as a location rather than as a
@@ -1843,6 +1857,14 @@ const DISCLOSURE = { open: '\u25BC', closed: '\u25B6' };
    redraws nothing. Every reader of a set copies it before changing it. */
 const EMPTY_SET = new Set();
 
+/* Rows either side of the scrollport, so a scroll shorter than one of them lands on rows already
+   drawn. */
+const WINDOW_MARGIN = 8;
+
+/* Above this a listing is drawn a window at a time, and the spread the widths are read off is the
+   listing thinned back to it, so a listing at the bound is drawn whole either way. */
+const WINDOW_FROM = 200;
+
 /* Only the caller knows which of its columns hold figures, so the alignment is written onto the
    cells. A column may also declare that it takes the width the others leave, its content cut to
    whatever that turns out to be. */
@@ -1863,7 +1885,10 @@ const figureColumn = (key, header, of, print) => ({
   key,
   header,
   align: 'right',
-  render: (row) => (of(row) == null ? DASH : print(of(row), row)),
+  render: (row) => {
+    const value = of(row);
+    return value == null ? DASH : print(value, row);
+  },
   sortValue: of,
 });
 
@@ -1886,11 +1911,18 @@ function DataTable({
 
   /* A table wider than its panel scrolls sideways, which would carry a group's heading and whatever
      it holds off the edge with it. The heading is pinned to the scrollport and sized to it, so both
-     stay in view however far the columns have been scrolled. */
+     stay in view however far the columns have been scrolled. A panel that changed width is also a
+     table whose columns have to be solved again, the one claiming the slack being as wide as the
+     scrollport leaves it. */
   useEffect(() => {
-    const observer = new ResizeObserver(() =>
-      wrapper.current.style.setProperty('--scrollport', wrapper.current.clientWidth + 'px')
-    );
+    let held = null;
+    const observer = new ResizeObserver(() => {
+      const width = wrapper.current.clientWidth;
+      if (width === held) return;
+      held = width;
+      wrapper.current.style.setProperty('--scrollport', width + 'px');
+      setSizing(null);
+    });
     observer.observe(wrapper.current);
     return () => observer.disconnect();
   }, []);
@@ -1933,6 +1965,141 @@ function DataTable({
     );
   }, [ordered, groupBy]);
 
+  /* One entry per row the listing draws, a group's heading among them, so a window over a grouped
+     listing is a window over one array. A folded group contributes its heading alone. */
+  const items = useMemo(() => {
+    if (!groups) return ordered.map((row) => ({ row }));
+    const drawn = [];
+    for (const [key, under] of groups) {
+      if (key != null) drawn.push({ key, under });
+      if (key == null || !folded.has(key)) for (const row of under) drawn.push({ row });
+    }
+    return drawn;
+  }, [ordered, groups, folded]);
+
+  /* What the table was laid out from, read off it as it was drawn rather than solved again, since a
+     table drawing a fraction of its rows solves its columns from that fraction. The widths follow
+     from the values and the columns alone, so sorting and folding keep them. */
+  const [sizing, setSizing] = useState(null);
+
+  /* A listing long enough to be worth drawing a window of, and standing at a height a window can be
+     placed from. A panel drawn into no space at all measures rows of nothing, which names no entry
+     the scrollport reaches, so it is drawn whole until it has a height again. */
+  const windowed = items.length > WINDOW_FROM && sizing?.row !== 0;
+  const measuring = windowed && (sizing?.rows !== rows || sizing.columns !== columns);
+
+  /* The rows holding the least and the greatest of every column, drawn alongside the spread so that
+     a column is measured against the longest value it has to hold. The spread alone misses it, a
+     column of thousands of figures being as wide as one row the spread steps over. */
+  const widest = useMemo(() => {
+    if (!measuring) return EMPTY_SET;
+    const held = new Set();
+    /* A column states what it sorts on, and one whose cell prints more than that states the rest
+       under `prints`, since it is as wide as the longest of them. */
+    const dimensions = columns.flatMap((column) =>
+      [column.sortValue, ...(column.prints ?? NOTHING)].filter(Boolean)
+    );
+    for (const read of dimensions) {
+      let low;
+      let high;
+      let lowAt = -1;
+      let highAt = -1;
+      items.forEach((item, index) => {
+        if (!item.row) return;
+        const value = read(item.row);
+        if (value == null) return;
+        if (lowAt < 0 || value < low) [low, lowAt] = [value, index];
+        if (highAt < 0 || value > high) [high, highAt] = [value, index];
+      });
+      if (lowAt >= 0) held.add(lowAt);
+      if (highAt >= 0) held.add(highAt);
+    }
+    return held;
+  }, [items, columns, measuring]);
+
+  /* Where the reader was, kept as the window is computed. The spread the widths are read off is
+     shorter than the listing, so the scrollport clamps to it while it stands there, and the reader
+     is put back where they were once the listing has its length again. */
+  const anchored = useRef(0);
+  const restoring = useRef(null);
+
+  useLayoutEffect(() => {
+    if (!measuring) return;
+    if (restoring.current == null) restoring.current = anchored.current;
+    const table = wrapper.current.querySelector('table');
+    const height = (selector) => {
+      const row = table.querySelector(selector);
+      return row ? row.getBoundingClientRect().height : null;
+    };
+    const group = height('tbody tr.group-row');
+    const row = height('tbody tr:not(.group-row)');
+    setSizing({
+      rows,
+      columns,
+      widths: [...table.querySelectorAll('thead th')].map(
+        (cell) => cell.getBoundingClientRect().width
+      ),
+      row: row ?? group ?? 0,
+      group: group ?? row ?? 0,
+    });
+  });
+
+  /* Where each entry starts, so a scroll position names the first to draw without measuring any of
+     them. Nothing in a cell wraps, so a heading and a row each stand at one height. */
+  const offsets = useMemo(() => {
+    if (!sizing) return null;
+    const held = new Float64Array(items.length + 1);
+    for (let index = 0; index < items.length; index += 1) {
+      held[index + 1] = held[index] + (items[index].row ? sizing.row : sizing.group);
+    }
+    return held;
+  }, [items, sizing]);
+
+  const [range, setRange] = useState({ first: 0, last: 0 });
+
+  useLayoutEffect(() => {
+    if (!windowed || measuring) return;
+    const port = wrapper.current;
+    /* The entry an edge falls in, found by halving rather than by walking, a corpus running to
+       thousands of them. */
+    const at = (edge) => {
+      let low = 0;
+      let high = items.length;
+      while (low < high) {
+        const middle = (low + high) >> 1;
+        if (offsets[middle + 1] <= edge) low = middle + 1;
+        else high = middle;
+      }
+      return low;
+    };
+    const measure = () => {
+      anchored.current = port.scrollTop;
+      const first = Math.max(0, at(port.scrollTop) - WINDOW_MARGIN);
+      const last = Math.min(items.length, at(port.scrollTop + port.clientHeight) + WINDOW_MARGIN + 1);
+      setRange((held) => (held.first === first && held.last === last ? held : { first, last }));
+    };
+    if (restoring.current != null) {
+      port.scrollTop = restoring.current;
+      restoring.current = null;
+    }
+    measure();
+    let queued = false;
+    let frame = 0;
+    const onScroll = () => {
+      if (queued) return;
+      queued = true;
+      frame = requestAnimationFrame(() => {
+        queued = false;
+        measure();
+      });
+    };
+    port.addEventListener('scroll', onScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      port.removeEventListener('scroll', onScroll);
+    };
+  }, [items, offsets, windowed, measuring]);
+
   /* An unsorted column opens ascending and the sorted one reverses, so a second click on the column
      in force reads it from the other end. */
   const reorder = (key) =>
@@ -1961,11 +2128,11 @@ function DataTable({
     `;
   };
 
-  const bodyRow = (row) => {
+  const bodyRow = (row, at) => {
     const key = rowKey(row);
     const chosen = selection != null && selection.selected.has(key);
     return html`
-      <tr key=${key} class=${chosen ? 'row-selected' : null}>
+      <tr key=${key} class=${chosen ? 'row-selected' : null} aria-rowindex=${at}>
         ${selection &&
         html`<td>
           <input
@@ -1986,10 +2153,10 @@ function DataTable({
   /* The heading names the group on the left and holds whatever the caller offers for it on the
      right, which is one row rather than a column of its own. A group that holds its rows back names
      how many, since folded they cannot be counted. */
-  const groupRow = (key, held) => {
+  const groupRow = (key, held, at) => {
     const open = !folded.has(key);
     return html`
-      <tr class="group-row" key=${'group:' + key}>
+      <tr class="group-row" key=${'group:' + key} aria-rowindex=${at}>
         <td colspan=${span}>
           <div class="group-head">
             ${foldable
@@ -2010,6 +2177,14 @@ function DataTable({
     `;
   };
 
+  /* The rows a window leaves out, standing at the height they would have taken, so the listing keeps
+     its length and the scrollbar the reach it had. */
+  const spacer = (index, height) => html`
+    <tr class="window-gap" key=${'gap:' + index} aria-hidden="true" style=${'height:' + height + 'px'}>
+      <td colspan=${span}></td>
+    </tr>
+  `;
+
   const body = () => {
     if (!rows.length) {
       // Taken when the table is drawn, so a table the caller filters says which of the two empty
@@ -2017,19 +2192,54 @@ function DataTable({
       const state = typeof empty === 'function' ? empty() : empty;
       return html`<tr><td class="empty" colspan=${span}>${state}</td></tr>`;
     }
-    if (!groups) return ordered.map(bodyRow);
-    return groups.map(([key, held]) =>
-      key == null
-        ? held.map(bodyRow)
-        : [groupRow(key, held), ...(folded.has(key) ? [] : held.map(bodyRow))]
-    );
+    const draw = (item, index) => {
+      const at = windowed ? index + 2 : null;
+      return item.row ? bodyRow(item.row, at) : groupRow(item.key, item.under, at);
+    };
+    if (!windowed || measuring) {
+      /* The whole listing, or the spread of it the widths are read off, which is drawn once and
+         replaced by the window before anything is painted. */
+      if (!measuring) return items.map(draw);
+      const step = Math.ceil(items.length / WINDOW_FROM);
+      const at = new Set(widest);
+      for (let index = 0; index < items.length; index += step) at.add(index);
+      return [...at].sort((left, right) => left - right).map((index) => draw(items[index], index));
+    }
+    const drawn = [];
+    let gap = 0;
+    items.forEach((item, index) => {
+      /* Every heading is drawn wherever its group sits, so the listing keeps its shape and every
+         control in it stays reachable, and only the rows under it are windowed. */
+      if (item.row && (index < range.first || index >= range.last)) {
+        gap += sizing.row;
+        return;
+      }
+      if (gap > 0) drawn.push(spacer(index, gap));
+      gap = 0;
+      drawn.push(draw(item, index));
+    });
+    if (gap > 0) drawn.push(spacer(items.length, gap));
+    return drawn;
   };
 
   return html`
     <div class=${['table-wrap', height].filter(Boolean).join(' ')} ref=${wrapper}>
-      <table class="data-table">
+      <!-- A windowed listing states how many rows it stands for, the ones it draws being the few a
+           reader can see, and lays out from the widths it was measured at rather than solving them
+           again from those few. -->
+      <table
+        class="data-table"
+        aria-rowcount=${windowed ? items.length + 1 : null}
+        style=${windowed && !measuring ? 'table-layout:fixed' : null}>
+        ${windowed &&
+        !measuring &&
+        html`<colgroup>
+          ${sizing.widths.map(
+            (width, index) => html`<col key=${index} style=${'width:' + width + 'px'} />`
+          )}
+        </colgroup>`}
         <thead>
-          <tr>
+          <tr aria-rowindex=${windowed ? 1 : null}>
             ${selection && html`<th></th>`}
             ${columns.map(headerCell)}
             <!-- Takes the width the columns do not, so each of them is as wide as what it holds and
@@ -2955,14 +3165,22 @@ const Difference = ({ share, line, children }) => html`
    on one line and the difference on the next, stated both in the unit it was profiled in and as the
    share of the baseline it comes to. The baseline itself, and any run level with it, carries the
    magnitude alone, there being no difference to state. */
+/* The line a delta prints under the magnitude, which is the longer of the two and so what the column
+   holding it is as wide as. Absent where the two agree and only the magnitude is printed. */
+const deltaLine = (value, baseline, format) =>
+  baseline == null || value == null || value === baseline
+    ? null
+    : signed(value - baseline, rounded(format)) +
+      ' (' +
+      signed((value - baseline) / baseline, percent) +
+      ')';
+
 function Delta({ value, baseline, format }) {
-  if (baseline == null || value === baseline) return format(value);
-  const share = (value - baseline) / baseline;
+  const line = deltaLine(value, baseline, format);
+  if (line == null) return format(value);
   return html`
     ${format(value)}
-    <${Difference} share=${share} line>
-      ${signed(value - baseline, rounded(format)) + ' (' + signed(share, percent) + ')'}
-    <//>
+    <${Difference} share=${(value - baseline) / baseline} line>${line}<//>
   `;
 }
 
@@ -3376,6 +3594,9 @@ const SEARCH_DEBOUNCE = 200;
    reader looks a block up in. Any other order is one column click away. */
 const BLOCK_ORDER = { key: 'name', direction: 'ascending' };
 
+/* A block is named by the string the listing holds it as. */
+const blockKey = (name) => name;
+
 /* The limit a corpus's cases were filled to, offered wherever a listing holds more than one of them,
    so a reader asks for one and reads a case at that limit rather than at seven. It stands ahead of
    the gas a block used, which is what the block did rather than what it was filled to. */
@@ -3440,6 +3661,35 @@ function BlocksPanel({
 
   const folding = useFolding(rows, groupKey, grouping);
 
+  /* Held across renders, since the listing keys the widths it laid out from on them. */
+  const shown = useMemo(
+    () => [
+      {
+        key: 'name',
+        header: 'Block',
+        // Takes what the other columns leave, so a name is shown whole wherever there is room
+        // for it. A caller that claims the slack too shares it with the name rather than
+        // leaving the rows it lists unidentifiable.
+        fill: true,
+        // Only a row stating the whole name can outrun the column, so only it is offered the
+        // overlay. A block off the chain is read by its number and one standing under a heading
+        // carries the case alone, and neither is longer than the room it has.
+        render: (name) => html`
+          <div class="block-name">
+            <${Truncate}
+              text=${blockLabel(name, metadata(name), heading)}
+              overlay=${!grouped && !fromChain(name)} />
+            <${CopyButton} text=${name} label=${'Copy the full name of ' + name} />
+          </div>
+        `,
+        sortValue: (name) => (fromChain(name) ? metadata(name).block_number : gasLimitOrder(name)),
+      },
+      figureColumn('gas', 'Gas', (name) => metadata(name).gas_used, si),
+      ...columns,
+    ],
+    [columns, blockLabel, metadata, heading, grouped]
+  );
+
   const panelControls = html`
     <div class="chips">
       <!-- A corpus taken off the chain is one flat run of blocks, so it is offered neither the
@@ -3478,33 +3728,9 @@ function BlocksPanel({
         html`<${Filters} filters=${narrowing} kept=${rows.length} total=${names.length} />`}
       </div>`}
       <${DataTable}
-        columns=${[
-          {
-            key: 'name',
-            header: 'Block',
-            // Takes what the other columns leave, so a name is shown whole wherever there is room
-            // for it. A caller that claims the slack too shares it with the name rather than
-            // leaving the rows it lists unidentifiable.
-            fill: true,
-            // Only a row stating the whole name can outrun the column, so only it is offered the
-            // overlay. A block off the chain is read by its number and one standing under a heading
-            // carries the case alone, and neither is longer than the room it has.
-            render: (name) => html`
-              <div class="block-name">
-                <${Truncate}
-                  text=${blockLabel(name, metadata(name), heading)}
-                  overlay=${!grouped && !fromChain(name)} />
-                <${CopyButton} text=${name} label=${'Copy the full name of ' + name} />
-              </div>
-            `,
-            sortValue: (name) =>
-              fromChain(name) ? metadata(name).block_number : gasLimitOrder(name),
-          },
-          figureColumn('gas', 'Gas', (name) => metadata(name).gas_used, si),
-          ...columns,
-        ]}
+        columns=${shown}
         rows=${rows}
-        rowKey=${(name) => name}
+        rowKey=${blockKey}
         initialSort=${BLOCK_ORDER}
         groupBy=${groupKey}
         foldable=${grouped}
@@ -3715,6 +3941,7 @@ function ProvingPanel({ entry, run, fixtures }) {
      reaches what the chart holds by position. */
   const timed = useMemo(() => points.map((point) => point[3]), [points]);
   const held = useMemo(() => new Map(points.map((point) => [point[3], point])), [points]);
+  const metadata = useMemo(() => (name) => run.profile[name].metadata, [run]);
 
   const measured = (name) => held.get(name)[1];
   const predicted = (name) => fit.predicted(held.get(name));
@@ -3748,6 +3975,16 @@ function ProvingPanel({ entry, run, fixtures }) {
         print: percent,
         presets: () => [95, 99],
       },
+    ],
+    [held, fit]
+  );
+
+  const timeColumns = useMemo(
+    () => [
+      figureColumn('cost', 'Cost', (name) => held.get(name)[0], si),
+      figureColumn('time', 'Time', measured, duration),
+      figureColumn('fitted', 'Fitted', predicted, duration),
+      figureColumn('error', 'Error', error, (figure) => html`<${Deviation} share=${figure} />`),
     ],
     [held, fit]
   );
@@ -3831,14 +4068,9 @@ function ProvingPanel({ entry, run, fixtures }) {
       <${BlocksPanel}
         title="Proving time per block"
         names=${timed}
-        metadata=${(name) => run.profile[name].metadata}
+        metadata=${metadata}
         filters=${dimensions}
-        columns=${[
-          figureColumn('cost', 'Cost', (name) => held.get(name)[0], si),
-          figureColumn('time', 'Time', measured, duration),
-          figureColumn('fitted', 'Fitted', predicted, duration),
-          figureColumn('error', 'Error', error, (figure) => html`<${Deviation} share=${figure} />`),
-        ]} />
+        columns=${timeColumns} />
     `}
   `;
 }
@@ -3887,7 +4119,7 @@ const BaselineChips = ({ rows, label, extremes = NOTHING, value, onChange }) => 
 function CompareBlocksPanel({ rows, fixtures }) {
   const [baseline, setBaseline] = useState(BASELINE_EXTREMES[0].key);
   const [value, setValue] = useState(BLOCK_VALUES[0].key);
-  const label = runLabels(rows.map((row) => row.entry));
+  const label = useMemo(() => runLabels(rows.map((row) => row.entry)), [rows]);
 
   const values = useMemo(() => valuesRecorded(rows, fixtures), [rows, fixtures]);
   const chosen = values.find((option) => option.key === value) ?? values[0];
@@ -3908,10 +4140,38 @@ function CompareBlocksPanel({ rows, fixtures }) {
     );
   }, [rows, fixtures, baseline, chosen]);
 
+  /* Held across renders, since the listing keys the widths it laid out from on them. */
+  const metadata = useMemo(() => (name) => rows[0].run.profile[name].metadata, [rows]);
+
+  const columns = useMemo(
+    () =>
+      rows.map((row) => {
+        const of = (name) => chosen.of(row.run.profile[name]);
+        return {
+          ...figureColumn(
+            'run:' + row.entry.runId,
+            label(row.entry),
+            of,
+            (figure, name) =>
+              html`<${Delta}
+                value=${figure}
+                baseline=${baselines.get(name)}
+                format=${chosen.format} />`
+          ),
+          /* The cell prints a line under the magnitude that outruns it, so the column is measured
+             against the longest of those rather than against the largest figure. */
+          prints: [
+            (name) => deltaLine(of(name), baselines.get(name), chosen.format)?.length ?? null,
+          ],
+        };
+      }),
+    [rows, label, chosen, baselines]
+  );
+
   return html`
     <${BlocksPanel}
       names=${fixtures}
-      metadata=${(name) => rows[0].run.profile[name].metadata}
+      metadata=${metadata}
       filters=${GAS_TARGET_FILTERS}
       choices=${html`
         <${BaselineChips}
@@ -3927,18 +4187,7 @@ function CompareBlocksPanel({ rows, fixtures }) {
           value=${chosen.key}
           onChange=${setValue} />`}
       `}
-      columns=${rows.map((row) =>
-        figureColumn(
-          'run:' + row.entry.runId,
-          label(row.entry),
-          (name) => chosen.of(row.run.profile[name]),
-          (figure, name) =>
-            html`<${Delta}
-              value=${figure}
-              baseline=${baselines.get(name)}
-              format=${chosen.format} />`
-        )
-      )} />
+      columns=${columns} />
   `;
 }
 
@@ -4132,11 +4381,13 @@ function RunView({ entry, run, fixtures, figures, size }) {
      total beside them already carries, so the kinds open as shares of it. */
   const [shares, setShares] = useState(true);
   const painted = usePainted();
-  const cost = (name) => run.profile[name].cost;
-  const metadata = (name) => run.profile[name].metadata;
+  /* Held across renders, since the listing keys the widths it laid out from on the columns these
+     close over. */
+  const cost = useMemo(() => (name) => run.profile[name].cost, [run]);
+  const metadata = useMemo(() => (name) => run.profile[name].metadata, [run]);
   /* What the run is short of its corpus by, listed the same way and only where there is something
      to list. A profile written before failures were recorded carries none. */
-  const failed = Object.keys(run.failures ?? {});
+  const failed = useMemo(() => Object.keys(run.failures ?? {}), [run]);
 
   /* Every figure the listing states, offered as a bound on it. A kind is offered twice, once in the
      unit it was profiled in and once as the share it takes of the total, since a block is asked for
@@ -4182,6 +4433,35 @@ function RunView({ entry, run, fixtures, figures, size }) {
     ],
     [run, entry]
   );
+
+  const blockColumns = useMemo(
+    () => [
+      figureColumn('total', 'Cost', (name) => costTotal(cost(name)), si),
+      // Keyed apart from the fixed columns, since a zkVM is free to call one of its kinds `total`.
+      ...entry.composition.map((kind) =>
+        figureColumn(
+          'kind:' + kind.name,
+          kind.name,
+          (name) =>
+            shares ? cost(name)[kind.name] / costTotal(cost(name)) : cost(name)[kind.name],
+          shares ? percent : si
+        )
+      ),
+      figureColumn('heap', 'Peak heap', (name) => run.profile[name].peak_heap_bytes ?? null, bytes),
+    ],
+    [run, entry, shares, cost]
+  );
+
+  const failureColumns = useMemo(
+    () => [
+      // Sized to what it holds, as every column but the one holding the names is, and read on one
+      // line, since what a backend reported is the whole of why the block is listed here.
+      column('reason', 'Reason', (name) => run.failures[name].reason),
+    ],
+    [run]
+  );
+
+  const failureMetadata = useMemo(() => (name) => run.failures[name].metadata, [run]);
 
   return html`
     <!-- What was profiled over what it was profiled on, which is the guest and its build against the
@@ -4231,36 +4511,14 @@ function RunView({ entry, run, fixtures, figures, size }) {
       control=${html`<${Pill} onClick=${() => setShares((held) => !held)}>
         ${shares ? 'Show cost' : 'Show percentage'}
       <//>`}
-      columns=${[
-        figureColumn('total', 'Cost', (name) => costTotal(cost(name)), si),
-        // Keyed apart from the fixed columns, since a zkVM is free to call one of its kinds `total`.
-        ...entry.composition.map((kind) =>
-          figureColumn(
-            'kind:' + kind.name,
-            kind.name,
-            (name) =>
-              shares ? cost(name)[kind.name] / costTotal(cost(name)) : cost(name)[kind.name],
-            shares ? percent : si
-          )
-        ),
-        figureColumn(
-          'heap',
-          'Peak heap',
-          (name) => run.profile[name].peak_heap_bytes ?? null,
-          bytes
-        ),
-      ]} />`}
+      columns=${blockColumns} />`}
     ${painted &&
     failed.length > 0 &&
     html`<${BlocksPanel}
       title="Failures"
       names=${failed}
-      metadata=${(name) => run.failures[name].metadata}
-      columns=${[
-        // Sized to what it holds, as every column but the one holding the names is, and read on one
-        // line, since what a backend reported is the whole of why the block is listed here.
-        column('reason', 'Reason', (name) => run.failures[name].reason),
-      ]} />`}
+      metadata=${failureMetadata}
+      columns=${failureColumns} />`}
     <!-- Last, and only for a run someone has published proving times for, since it is the one panel
          drawn from a measurement this crate did not take. -->
     ${entry.proving?.length > 0 &&
@@ -4319,18 +4577,12 @@ function ComparePage({ ids }) {
   /* The two listings below the charts are the bulk of the page's work and none of what a reader
      landing on it looks at first, so the charts come up without waiting on them. */
   const painted = usePainted();
-  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
-  if (!state.value) return null;
-  const { entries, runs, fixtures } = state.value;
 
-  /* The overview table and the charts, over the fixtures every run in the comparison profiled, so a
-     set spanning corpora can leave none at all and there is nothing to draw. */
-  const drawn = () => {
-    if (!fixtures.length) {
-      return html`<${Card} title="Overview">
-        <p class="empty">These runs share no profiled fixture.</p>
-      <//>`;
-    }
+  /* What the panels are drawn from, held across renders, since a run's figures follow from its
+     profile alone and a chart handed them again redraws for nothing. */
+  const derived = useMemo(() => {
+    if (!state.value?.fixtures.length) return null;
+    const { entries, runs, fixtures } = state.value;
     // entries and runs are parallel, an index entry beside the profile it names.
     const rows = entries
       .map((entry, index) => ({
@@ -4352,23 +4604,37 @@ function ComparePage({ ids }) {
             cost: Math.min(...rows.map((row) => row.statistics.meanCost)),
             heap: heaps.length ? Math.min(...heaps) : null,
           };
-    const columns = runColumns(new Map(rows.map((row) => [row.entry.runId, row.statistics])), {
+    const held = runColumns(new Map(rows.map((row) => [row.entry.runId, row.statistics])), {
       baseline,
     });
+    return {
+      rows,
+      categories,
+      overview: [held.guest, held.version, held.meanCost, held.peakHeapMean, held.sha256, held.elf],
+      entries: rows.map((row) => row.entry),
+    };
+  }, [state.value]);
+
+  if (state.error) return html`<${ErrorCard} message=${state.error.message} />`;
+  if (!state.value) return null;
+  const { entries, fixtures } = state.value;
+
+  /* The overview table and the charts, over the fixtures every run in the comparison profiled, so a
+     set spanning corpora can leave none at all and there is nothing to draw. */
+  const drawn = () => {
+    if (!derived) {
+      return html`<${Card} title="Overview">
+        <p class="empty">These runs share no profiled fixture.</p>
+      <//>`;
+    }
+    const { rows, categories } = derived;
     return html`
       <${Card} title="Overview">
         <p>${RELATIVE_NOTE}</p>
         <${DataTable}
-          columns=${[
-            columns.guest,
-            columns.version,
-            columns.meanCost,
-            columns.peakHeapMean,
-            columns.sha256,
-            columns.elf,
-          ]}
-          rows=${rows.map((row) => row.entry)}
-          rowKey=${(entry) => entry.runId} />
+          columns=${derived.overview}
+          rows=${derived.entries}
+          rowKey=${runIdOf} />
       <//>
       <${CostPanels} rows=${rows} fixtures=${fixtures} />
       ${painted &&
@@ -4442,10 +4708,11 @@ function SuiteView({ suite, entries }) {
   /* The corpus as the registry states it, which is every block in it against the number and the gas
      the block carries, so the listing is the corpus rather than the part of it some run reached. */
   const names = useMemo(() => suite.blocks.map((block) => block.name), [suite]);
-  const metadata = useMemo(
-    () => new Map(suite.blocks.map((block) => [block.name, block])),
-    [suite]
-  );
+  /* Held across renders, since the listing keys the widths it laid out from on the accessor. */
+  const metadata = useMemo(() => {
+    const held = new Map(suite.blocks.map((block) => [block.name, block]));
+    return (name) => held.get(name);
+  }, [suite]);
 
   return html`
     <${Card} title="Suite">
@@ -4458,7 +4725,7 @@ function SuiteView({ suite, entries }) {
     <//>
     <${BlocksPanel}
       names=${names}
-      metadata=${(name) => metadata.get(name)}
+      metadata=${metadata}
       filters=${GAS_TARGET_FILTERS} />
     <${RunsPanel}
       entries=${entries}

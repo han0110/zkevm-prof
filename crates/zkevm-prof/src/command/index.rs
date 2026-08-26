@@ -6,7 +6,7 @@
 
 use std::{
     collections::BTreeMap,
-    fs::{self, File},
+    fs::File,
     io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
@@ -17,7 +17,11 @@ use serde::{Deserialize, Serialize, de::IgnoredAny};
 use walkdir::WalkDir;
 use zkvm_prof::{Component, zkVMKind};
 
-use crate::profile::Meta;
+use crate::{
+    command::read,
+    profile::Meta,
+    proving::{Proving, ProvingMeta},
+};
 
 /// File the index is written to, which is the one file under the directory that is not a profile.
 const INDEX: &str = "index.json";
@@ -36,34 +40,6 @@ struct Document {
     /// Read for its keys alone, which are what a proving time dataset is checked against.
     profile: BTreeMap<String, IgnoredAny>,
     meta: Meta,
-}
-
-/// A published proving time dataset, one wall clock time in milliseconds per block proved.
-#[derive(Deserialize)]
-struct Proving {
-    proving_time_ms: BTreeMap<String, f64>,
-    meta: ProvingMeta,
-}
-
-/// What produced a set of proving times, which is the machine they were proved on.
-#[derive(Deserialize, Serialize)]
-struct ProvingMeta {
-    /// What the dataset is called wherever the page offers it.
-    name: String,
-    /// Machines the proving ran across, every one of them the hardware below.
-    machines: u32,
-    hardware: Hardware,
-}
-
-/// One machine of the set that proved a dataset.
-#[derive(Deserialize, Serialize)]
-struct Hardware {
-    cpu: String,
-    ram_bytes: u64,
-    os: String,
-    /// Empty on a machine that proves on its CPU alone.
-    #[serde(default)]
-    gpus: Vec<String>,
 }
 
 /// A proving time dataset as it was read, which is the run it was proved over and what it holds.
@@ -203,12 +179,6 @@ impl IndexCmd {
         eprintln!("indexed {} runs into {}", index.runs.len(), path.display());
         Ok(())
     }
-}
-
-fn read<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
-    let text =
-        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
-    serde_json::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))
 }
 
 /// Every JSON file under `dir` but the index itself, split into the profiles and the proving time

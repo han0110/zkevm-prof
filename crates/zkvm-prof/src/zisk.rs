@@ -7,6 +7,9 @@
 //!
 //! Peak heap comes out of the same run. The emulator keeps the whole guest RAM until it is dropped,
 //! so the heap the ZisK linker script delimits is still there to read once the run is over.
+//!
+//! Public values come out of the same RAM. A guest writes them into the output region ZisK
+//! reserves. The backend reads the whole region, so the bytes past what the guest wrote are zero.
 
 use std::ops::Range;
 
@@ -143,6 +146,7 @@ impl ZiskProfiler {
         Ok(Execution {
             cost,
             peak_heap_bytes: peak_heap_bytes(heap),
+            public_values: emu.get_output_8(),
         })
     }
 }

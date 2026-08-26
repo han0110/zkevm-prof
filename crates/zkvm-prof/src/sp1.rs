@@ -23,6 +23,10 @@
 //! measured against a heap it does not have. The runtime reserves a region for the input directly
 //! above the heap and reads the input into its base, which makes the topmost written region of a run
 //! that input and the heap everything below it.
+//!
+//! Public values come out of the same run, and reading them touches no guest memory. A guest
+//! reveals them through the write syscall the executor serves rather than into a region of its own.
+//! The run therefore accumulates exactly what the guest revealed, and both paths above reach it.
 
 use std::sync::Arc;
 
@@ -87,7 +91,7 @@ const SYSTEM: &str = "system";
 /// Weight gas gives a trace cell relative to a constraint.
 const TRACE_AREA_WEIGHT: u64 = 3;
 
-/// Nonce the execution commits to, which reaches the public values rather than the cost.
+/// Nonce the execution commits to, which reaches the proof's own public values rather than the cost.
 const PROOF_NONCE: [u32; 4] = [0; 4];
 
 /// What the chunks of one execution charged, before the parts are turned into a cost map.
@@ -175,7 +179,7 @@ impl SP1Profiler {
     /// private field. Holding it here instead reaches the memory the guest ran against, and leaves
     /// the charging untouched, since the chunks and the program are the same either way.
     #[cfg(sp1_jit_memory)]
-    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>, Vec<u8>)> {
         use std::os::fd::AsRawFd;
 
         use memmap2::MmapMut;
@@ -208,14 +212,14 @@ impl SP1Profiler {
         }
 
         let peak_heap_bytes = peak_heap_bytes(jit.memory.as_raw_fd(), self.heap_bottom, input)?;
-        Ok((charges, peak_heap_bytes))
+        Ok((charges, peak_heap_bytes, jit.public_values_stream))
     }
 
     /// Runs the guest over the whole minimal trace, charging every chunk.
     ///
     /// Guest memory stays behind the executor here, so no heap is read.
     #[cfg(not(sp1_jit_memory))]
-    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>)> {
+    fn execute(&self, input: &[u8]) -> Result<(Charges, Option<u64>, Vec<u8>)> {
         use sp1_core_executor::MinimalExecutorEnum;
 
         let mut executor = MinimalExecutorEnum::new(
@@ -234,12 +238,12 @@ impl SP1Profiler {
         {
             self.charge_chunk(&chunk, &mut charges)?;
         }
-        Ok((charges, None))
+        Ok((charges, None, executor.into_public_values_stream()))
     }
 
     /// Splits what the run charged into the kinds the program drove.
     fn run(&self, input: &[u8]) -> Result<Execution> {
-        let (charges, peak_heap_bytes) = self.execute(input)?;
+        let (charges, peak_heap_bytes, public_values) = self.execute(input)?;
         if charges.exit_code != 0 {
             bail!("the guest exited with {}", charges.exit_code);
         }
@@ -259,6 +263,7 @@ impl SP1Profiler {
                 (SYSTEM.to_owned(), charges.system),
             ]),
             peak_heap_bytes,
+            public_values,
         })
     }
 }

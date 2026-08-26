@@ -220,6 +220,26 @@
           "name": "main",
           "note": "Main"
         }
+      ],
+      "proving": [
+        {
+          "file": "ef-cluster-4x4",
+          "meta": {
+            "name": "EF Cluster (4x4)",
+            "machines": 4,
+            "hardware": {
+              "cpu": "AMD Ryzen Threadripper PRO 9975WX 32-Cores",
+              "ram_bytes": 134217728000,
+              "os": "ubuntu 24.04",
+              "gpus": [
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090"
+              ]
+            }
+          }
+        }
       ]
     },
     {
@@ -401,6 +421,26 @@
         {
           "name": "main",
           "note": "Main"
+        }
+      ],
+      "proving": [
+        {
+          "file": "ef-cluster-4x4",
+          "meta": {
+            "name": "EF Cluster (4x4)",
+            "machines": 4,
+            "hardware": {
+              "cpu": "AMD Ryzen Threadripper PRO 9975WX 32-Cores",
+              "ram_bytes": 134217728000,
+              "os": "ubuntu 24.04",
+              "gpus": [
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090"
+              ]
+            }
+          }
         }
       ]
     },

@@ -13,6 +13,10 @@
 //! Peak heap comes out of the same runs. Metered cost stubs the memory model out of the pricing but
 //! still runs the guest against real memory, so the state a run returns holds the heap the guest
 //! wrote.
+//!
+//! Public values come out of the same state. A guest reveals into an address space of its own. The
+//! backend reads the whole region the VM reserves there, so the bytes past what the guest revealed
+//! are zero.
 
 use std::ops::Range;
 
@@ -21,7 +25,10 @@ use openvm_sdk::{
     Sdk, StdIn,
     compiled::MeteredCostInstance,
     config::{AggregationSystemParams, AppConfig},
-    openvm_circuit::arch::{execution_mode::MeteredCostCtx, instructions::riscv::RV64_MEMORY_AS},
+    openvm_circuit::{
+        arch::{execution_mode::MeteredCostCtx, instructions::riscv::RV64_MEMORY_AS},
+        system::memory::merkle::public_values::extract_public_values,
+    },
 };
 use openvm_sdk_config::SdkVmConfig;
 use openvm_stark_sdk::config::{MAX_APP_LOG_STACKED_HEIGHT, app_params_with_100_bits_security};
@@ -177,25 +184,25 @@ impl OpenVMProfiler {
         })
     }
 
-    /// Runs `instance`, returning its cost and, when `read_heap` is set, the peak heap the run left
-    /// behind.
+    /// Runs `instance`, returning its cost and, when `read_state` is set, the peak heap and the
+    /// public values the run left behind.
     ///
     /// Every artifact runs the same program and differs only in the widths it charges, so they all
-    /// leave the same heap and reading it once is reading it for all of them.
+    /// leave the same state and reading it once is reading it for all of them.
     fn execute(
         &self,
         instance: &MeteredCostInstance<'static>,
         stdin: &StdIn,
-        read_heap: bool,
-    ) -> Result<(u64, Option<u64>)> {
-        // `Sdk::execute_metered_cost` wraps this call to also read the guest's public values, which
-        // a cost profile does not report. Going through the artifact keeps the SDK off the worker
-        // threads, since only the artifact is shareable.
+        read_state: bool,
+    ) -> Result<(u64, Option<u64>, Vec<u8>)> {
+        // `Sdk::execute_metered_cost` wraps this call to read the same public values back out of
+        // the state. Going through the artifact keeps the SDK off the worker threads, since only
+        // the artifact is shareable.
         let (ctx, state) = instance
             .execute_metered_cost(stdin.clone(), self.ctx.clone())
             .map_err(|error| anyhow!("metered cost execution failed: {error}"))?;
-        if !read_heap {
-            return Ok((ctx.cost, None));
+        if !read_state {
+            return Ok((ctx.cost, None, Vec::new()));
         }
         // The compiled artifact runs against the state's own buffer, so the memory it hands back is
         // the one the guest wrote and a guest byte address is a byte offset into the RISC-V address
@@ -208,7 +215,8 @@ impl OpenVMProfiler {
                 self.heap.end - self.heap.start,
             )
             .map_err(|error| anyhow!("failed to read the guest's heap: {error}"))?;
-        Ok((ctx.cost, peak_heap_bytes(heap)))
+        let public_values = extract_public_values(NUM_PUBLIC_VALUE_BYTES, &state.memory.memory);
+        Ok((ctx.cost, peak_heap_bytes(heap), public_values))
     }
 
     /// Runs the guest once per kind and once more for the whole, which is what the kinds are then
@@ -224,7 +232,7 @@ impl OpenVMProfiler {
 
         // The kinds leave out the AIRs no instruction can charge, so kinds that fall short of the
         // whole cost mean one of them took a row after all.
-        let (total, peak_heap_bytes) = self.execute(&self.whole, &stdin, true)?;
+        let (total, peak_heap_bytes, public_values) = self.execute(&self.whole, &stdin, true)?;
         let summed: u64 = cost.values().sum();
         ensure!(
             summed == total,
@@ -234,6 +242,7 @@ impl OpenVMProfiler {
         Ok(Execution {
             cost,
             peak_heap_bytes,
+            public_values,
         })
     }
 }

@@ -28,13 +28,19 @@ pub use ere_catalog::zkVMKind;
 /// each other before returning, which is what makes the sum the zkVM's own figure.
 pub type Cost = BTreeMap<String, u64>;
 
-/// What one execution of a guest cost, and the heap it used.
+/// What one execution of a guest cost, the heap it used, and what it revealed.
 #[derive(Debug)]
 pub struct Execution {
     pub cost: Cost,
     /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
     /// left its heap untouched.
     pub peak_heap_bytes: Option<u64>,
+    /// Public values the run left behind, in the order the guest revealed them.
+    ///
+    /// A zkVM that reserves a region carries the whole region, and the bytes past what the guest
+    /// revealed are zero. A zkVM that streams them carries exactly what the guest revealed. A
+    /// caller reads the prefix it expects in both cases.
+    pub public_values: Vec<u8>,
 }
 
 /// Address the guest ELF gives `symbol`, which a guest whose zkVM delimits its heap with it carries.

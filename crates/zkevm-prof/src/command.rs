@@ -1,12 +1,24 @@
 //! CLI commands.
 
+pub mod import;
 pub mod index;
 pub mod profile;
 
 use std::{
-    env,
+    env, fs,
+    path::Path,
     time::{SystemTime, UNIX_EPOCH},
 };
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
+/// Reads a JSON document, naming the file it failed on rather than the offset alone.
+pub fn read<T: for<'de> Deserialize<'de>>(path: &Path) -> Result<T> {
+    let text =
+        fs::read_to_string(path).with_context(|| format!("failed to read {}", path.display()))?;
+    serde_json::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))
+}
 
 /// Wall clock time a run is stamped with, in seconds since the epoch.
 pub fn now() -> u64 {

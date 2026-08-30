@@ -4,31 +4,22 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
-zkvm-prof = { path = "../zkvm-prof" }
+zkvm-prof.workspace = true
 
-anyhow = "1"
-clap = { version = "4", features = ["derive"] }
-gag = "1"
-hex = "0.4"
-rayon = "1"
-regex = "1"
-reqwest = "0.12"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-sha2 = "0.10"
-tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
-walkdir = "2"
-
-# ere-guests
-stateless-validator-catalog = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
-stateless-validator-downloader = { git = "https://github.com/eth-act/ere-guests", tag = "v0.16.0" }
-
-# openvm, for examples that drive the SDK themselves rather than through the profiler.
-[dev-dependencies]
-openvm-sdk.workspace = true
-openvm-sdk-config.workspace = true
-openvm-stark-sdk.workspace = true
-openvm-transpiler.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+gag.workspace = true
+hex.workspace = true
+rayon.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+stateless-validator-catalog.workspace = true
+stateless-validator-downloader.workspace = true
+tokio.workspace = true
+walkdir.workspace = true
 
 [build-dependencies]
-cargo_metadata = "0.23"
+cargo_metadata.workspace = true

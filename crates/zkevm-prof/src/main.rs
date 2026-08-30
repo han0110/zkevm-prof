@@ -12,7 +12,7 @@ mod proving;
 mod registry;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 
 use crate::command::{import::ImportCmd, index::IndexCmd, profile::ProfileCmd};
 
@@ -21,12 +21,6 @@ use crate::command::{import::ImportCmd, index::IndexCmd, profile::ProfileCmd};
     name = "zkevm-prof",
     about = "Profiles stateless validator guests on zkVMs"
 )]
-struct Cli {
-    #[command(subcommand)]
-    command: Command,
-}
-
-#[derive(Subcommand)]
 enum Command {
     /// Profiles a guest over every fixture in a directory.
     Profile(ProfileCmd),
@@ -38,7 +32,7 @@ enum Command {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    match Cli::parse().command {
+    match Command::parse() {
         Command::Profile(cmd) => cmd.run().await,
         Command::Import(cmd) => cmd.run(),
         Command::Index(cmd) => cmd.run(),

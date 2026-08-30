@@ -30,7 +30,7 @@ fn main() {
     let (locator, commit) = source
         .repr
         .split_once('#')
-        .unwrap_or_else(|| panic!("{ERE_GUESTS_PACKAGE} must be a git dependency"));
+        .expect("a git source names the commit it locks to");
     if let Some(tag) = locator
         .split_once('?')
         .and_then(|(_, query)| query.strip_prefix("tag="))

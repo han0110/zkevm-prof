@@ -1,39 +1,56 @@
 //! Prices one execution of a guest on a zkVM.
 //!
-//! A zkVM contributes one module implementing [`Profiler`], which takes a guest ELF once and runs it
-//! over any number of inputs. Both are opaque bytes, so nothing here knows what a guest computes or
-//! what it is handed. The cost a run reports is an open map of whatever kinds that zkVM charges for,
-//! and [`composition`] names those kinds in the order a chart stacks them.
-
-pub mod openvm;
-pub mod sp1;
-pub mod zisk;
+//! A guest ELF is handed to the `ere-server` image the pinned ere revision publishes, which prices
+//! every input it is then given. Both the ELF and the input are opaque bytes, so nothing here knows
+//! what a guest computes or what it is handed. The cost a run reports is an open map of whatever
+//! kinds that zkVM charges for, and [`composition`] names those kinds in the order a chart stacks
+//! them.
 
 use std::{
     collections::BTreeMap,
-    ops::Range,
-    panic::{AssertUnwindSafe, catch_unwind},
+    env,
+    error::Error,
+    fmt::{self, Display, Formatter},
+    process::Command,
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
-use elf::{ElfBytes, endian::AnyEndian};
+use anyhow::{Context, Result, ensure};
+use ere_dockerized::{
+    DockerizedzkVM, DockerizedzkVMConfig, ERE_COST_ESTIMATION_HEAP_END,
+    ERE_COST_ESTIMATION_HEAP_START, Elf, Input, ProverResource, image::server_zkvm_image,
+    prover::Error as ContainerError, symbol_address,
+};
 use serde::{Deserialize, Serialize};
 
-pub use ere_catalog::zkVMKind;
+pub use ere_dockerized::zkVMKind;
+
+/// Environment variables ere decides an image reference from, whose module is private to
+/// `ere-dockerized` and so named again here.
+const ERE_IMAGE_REGISTRY: &str = "ERE_IMAGE_REGISTRY";
+const ERE_FORCE_REBUILD_DOCKER_IMAGE: &str = "ERE_FORCE_REBUILD_DOCKER_IMAGE";
+
+/// Registry the `ere-server` images are published to.
+///
+/// Named where the caller names none, since ere reads the variable to decide whether an image can be
+/// pulled at all and builds one from an ere checkout where it cannot.
+const PUBLISHED_REGISTRY: &str = "ghcr.io/eth-act/ere";
+
+/// Pair ere reads a ZisK heap between where the guest carries the one ZisK marked it with before
+/// v1.1.0-alpha.
+const ZISK_LEGACY_HEAP: &[&str] = &["_kernel_heap_bottom", "_kernel_heap_top"];
 
 /// Cost of one execution, keyed by the cost kinds the zkVM defines.
 ///
 /// The kinds partition the execution, so they sum to what the whole of it cost and no key holds that
-/// whole. A backend that prices an execution one way and splits it another checks the two against
-/// each other before returning, which is what makes the sum the zkVM's own figure.
+/// whole.
 pub type Cost = BTreeMap<String, u64>;
 
 /// What one execution of a guest cost, the heap it used, and what it revealed.
 #[derive(Debug)]
 pub struct Execution {
     pub cost: Cost,
-    /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
-    /// left its heap untouched.
+    /// Peak bytes of heap the guest reached, absent where the zkVM read no heap or the guest left
+    /// its heap untouched.
     pub peak_heap_bytes: Option<u64>,
     /// Public values the run left behind, in the order the guest revealed them.
     ///
@@ -43,181 +60,249 @@ pub struct Execution {
     pub public_values: Vec<u8>,
 }
 
-/// Address the guest ELF gives `symbol`, which a guest whose zkVM delimits its heap with it carries.
-///
-/// A missing symbol is an error rather than a heap of nothing, since a guest quietly absent from the
-/// heap chart reads as one that allocates nothing at all.
-pub fn heap_symbol(elf: &[u8], symbol: &str) -> Result<u64> {
-    symbol_address(elf, symbol)?
-        .with_context(|| format!("the guest ELF carries no {symbol}, which delimits its heap"))
+/// Why a block was not priced.
+#[derive(Debug)]
+pub enum Unpriced {
+    /// The zkVM reported the guest did not get through the block, which is a property of the block
+    /// and holds however often it is measured again.
+    Guest(anyhow::Error),
+    /// The container went away under the request, which says nothing about the block. Measure it
+    /// again rather than recording it as one the guest fails on.
+    Container(anyhow::Error),
 }
 
-/// Guest addresses the heap covers, from the `start` symbol its zkVM's toolchain marks the bottom
-/// with and the `end` that zkVM stops it at.
-///
-/// Which symbol marks the bottom is a property of the toolchain that linked the guest rather than of
-/// how the guest allocates, so one pair of delimiters serves every allocator.
-pub fn heap_range(elf: &[u8], start: &str, end: u64) -> Result<Range<u64>> {
-    let start = heap_symbol(elf, start)?;
-    ensure!(
-        start < end,
-        "the guest starts its heap at {start:#x}, past the {end:#x} its zkVM ends it at"
-    );
-    Ok(start..end)
+impl Unpriced {
+    /// What went wrong, whichever of the two it was.
+    pub fn error(&self) -> &anyhow::Error {
+        match self {
+            Self::Guest(error) | Self::Container(error) => error,
+        }
+    }
+
+    /// Reads an error for which of the two it is.
+    ///
+    /// What the zkVM itself reported is the guest's, and everything else is the container, the
+    /// transport, or this crate disagreeing with ere. An error of no kind read here stops a run
+    /// rather than being attributed to the block it interrupted.
+    fn of(error: anyhow::Error) -> Self {
+        match error.downcast_ref::<ContainerError>() {
+            Some(ContainerError::zkVM(_)) => Self::Guest(error),
+            _ => Self::Container(error),
+        }
+    }
 }
 
-/// Peak heap in bytes, from the heap `bytes` a run left behind, absent when the guest left the whole
-/// heap zero.
-///
-/// Guest memory starts zeroed and an allocator hands memory back without zeroing it, so the bytes
-/// left non-zero are the ones the guest reached and no allocator has to cooperate for them to be
-/// read. Taking the span between the outermost of them rather than the distance from the heap's
-/// bottom reads the same whether memory is handed out from the bottom up or from the top down.
-pub fn peak_heap_bytes(bytes: &[u8]) -> Option<u64> {
-    let highest = bytes.iter().rposition(|byte| *byte != 0)?;
-    let lowest = bytes
-        .iter()
-        .position(|byte| *byte != 0)
-        .expect("a heap holding a highest non-zero byte holds a lowest one");
-    Some((highest - lowest + 1) as u64)
+impl Display for Unpriced {
+    fn fmt(&self, formatter: &mut Formatter) -> fmt::Result {
+        Display::fmt(self.error(), formatter)
+    }
 }
 
-/// Address of the symbol in `elf` named `name`, absent when the ELF carries none.
-///
-/// A stripped guest carries no symbol table at all, which likewise reads as absent. Undefined
-/// symbols are skipped, since they carry an address of zero that would pass for a resolved one.
-pub fn symbol_address(elf: &[u8], name: &str) -> Result<Option<u64>> {
-    let elf = ElfBytes::<AnyEndian>::minimal_parse(elf)
-        .map_err(|error| anyhow!("failed to parse the guest ELF: {error}"))?;
-    let Some((symbols, names)) = elf
-        .symbol_table()
-        .map_err(|error| anyhow!("failed to read the guest ELF symbol table: {error}"))?
-    else {
-        return Ok(None);
-    };
-    Ok(symbols
-        .iter()
-        .find(|symbol| {
-            !symbol.is_undefined()
-                && names
-                    .get(symbol.st_name as usize)
-                    .is_ok_and(|it| it == name)
-        })
-        .map(|symbol| symbol.st_value))
-}
+impl Error for Unpriced {}
 
-/// One kind a cost splits into, with the note a report prints under the chart.
-pub struct Kind {
-    /// Key the cost map records the kind under.
-    pub name: &'static str,
-    /// What the kind covers, in one phrase a reader takes in at a glance.
-    pub note: &'static str,
-}
-
-/// One kind in the form a document carries it, so a reader of that document needs nothing else to
-/// stack a cost map it has never seen.
+/// One kind a cost splits into, in the form a document carries it, so a reader of that document
+/// needs nothing else to stack a cost map it has never seen.
 #[derive(Deserialize, Serialize)]
 pub struct Component {
+    /// Key the cost map records the kind under.
     pub name: String,
+    /// What the kind covers, in one phrase a reader takes in at a glance.
     pub note: String,
 }
 
-impl From<&Kind> for Component {
-    fn from(kind: &Kind) -> Self {
-        Self {
-            name: kind.name.to_owned(),
-            note: kind.note.to_owned(),
-        }
-    }
+/// The kinds the zkVM splits a cost into, in the order a chart stacks them.
+///
+/// ere names the keys and this names what each covers, so a run is checked against the list rather
+/// than described by it, and a kind ere adds stops a run instead of reaching a chart unlabelled.
+pub fn composition(zkvm: zkVMKind) -> Vec<Component> {
+    let kinds: &[(&str, &str)] = match zkvm {
+        zkVMKind::OpenVM => &[
+            ("precompile", "Precompiles"),
+            ("rv64", "RISC-V instructions"),
+            ("system", "Memory and tables"),
+        ],
+        zkVMKind::SP1 => &[
+            ("syscall", "Precompiles"),
+            ("system", "Memory and tables"),
+            ("opcode", "RISC-V instructions"),
+        ],
+        zkVMKind::Zisk => &[
+            ("base", "ROM and tables"),
+            ("precompile", "Precompiles"),
+            ("memory", "Memory"),
+            ("opcode", "ZisK instructions"),
+            ("main", "Main"),
+        ],
+    };
+    kinds
+        .iter()
+        .map(|(name, note)| Component {
+            name: (*name).to_owned(),
+            note: (*note).to_owned(),
+        })
+        .collect()
 }
 
-/// The kinds the zkVM that produced a profile splits a cost into, in stack order.
+/// Prices a single guest over many inputs.
 ///
-/// Each backend declares its own next to the profiler that fills the map, so a caller stacks
-/// whatever that zkVM charges for without knowing anything about it.
-pub fn composition(zkvm: zkVMKind) -> Result<&'static [Kind]> {
-    match zkvm {
-        zkVMKind::OpenVM => Ok(openvm::COMPOSITION),
-        zkVMKind::SP1 => Ok(sp1::COMPOSITION),
-        zkVMKind::Zisk => Ok(zisk::COMPOSITION),
-    }
+/// One container serves the whole corpus, so whatever the zkVM derives from the ELF is paid for once
+/// and every input after the first is one call into a warm process.
+pub struct Profiler {
+    zkvm: DockerizedzkVM,
+    kinds: Vec<Component>,
 }
 
-/// Profiles a single guest over many inputs.
-///
-/// A backend is constructed once per guest ELF, so whatever it derives from the ELF (a transpiled
-/// ROM, a compiled shared library) is paid for once and shared across the whole corpus.
-pub trait Profiler: Sync {
+impl Profiler {
+    /// Starts the published `ere-server` image for `zkvm` and hands it the guest.
+    ///
+    /// One guest per zkVM per host at a time. The container is named after its zkVM and binds one
+    /// port, so a second one takes the name and the port from the first, whose profiler then goes on
+    /// measuring the guest that replaced it.
+    pub fn new(zkvm: zkVMKind, elf: &[u8]) -> Result<Self> {
+        prepare(zkvm, elf)?;
+        let kinds = composition(zkvm);
+        standing(zkvm)?;
+
+        let image = server_zkvm_image(zkvm, false);
+        pull(&image)?;
+        let zkvm = DockerizedzkVM::new(
+            zkvm,
+            Elf(elf.to_vec()),
+            ProverResource::Cpu,
+            DockerizedzkVMConfig::default(),
+        )
+        .with_context(|| format!("failed to start {image}"))?;
+
+        Ok(Self { zkvm, kinds })
+    }
+
     /// Prices one execution of the guest over `input`.
     ///
-    /// A guest that breaks a zkVM invariant panics rather than returning, and a backend catches that
-    /// and reports it as the error it is, so one bad input costs a caller that input and no more.
-    fn profile(&self, input: &[u8]) -> Result<Execution>;
+    /// A guest that breaks a zkVM invariant panics inside the container, which reports it as the
+    /// error it is, so one bad input costs a caller that input and no more. A container that goes
+    /// away under the request takes down every block running in it, which is why the two are told
+    /// apart rather than both reported against the block.
+    pub fn profile(&self, input: &[u8]) -> Result<Execution, Unpriced> {
+        self.priced(input).map_err(Unpriced::of)
+    }
+
+    fn priced(&self, input: &[u8]) -> Result<Execution> {
+        let (public_values, mut estimation) = self
+            .zkvm
+            .execute_estimated_cost(&Input::new().with_stdin(input.to_vec()))?;
+        let unnamed: Vec<&str> = estimation
+            .cost
+            .keys()
+            .map(String::as_str)
+            .filter(|key| !self.kinds.iter().any(|kind| kind.name == *key))
+            .collect();
+        ensure!(
+            unnamed.is_empty(),
+            "the run priced {}, which the kinds it splits into do not name",
+            unnamed.join(" and ")
+        );
+        // A kind the zkVM charged nothing for is left out of the map it returns, and a reader that
+        // stacks the declared kinds reads a missing key as no figure rather than as no cost.
+        for kind in &self.kinds {
+            estimation.cost.entry(kind.name.clone()).or_insert(0);
+        }
+        Ok(Execution {
+            cost: estimation.cost,
+            peak_heap_bytes: estimation.peak_heap_bytes,
+            public_values: public_values.into(),
+        })
+    }
 }
 
-/// Runs `profile`, turning a panic inside a backend into an error.
+/// Symbols each zkVM's toolchain delimits a guest heap with, in the order a guest is searched for
+/// them, every symbol of a set having to resolve for ere to read that heap.
 ///
-/// A guest that breaks a zkVM invariant aborts the emulator by panicking rather than by returning,
-/// which would otherwise discard a whole corpus over one bad input. A backend carries no state from
-/// one input to the next, so a caught panic leaves nothing inconsistent behind.
-fn catching_panic(profile: impl FnOnce() -> Result<Execution>) -> Result<Execution> {
-    match catch_unwind(AssertUnwindSafe(profile)) {
-        Ok(result) => result,
-        Err(panic) => {
-            let message = panic
-                .downcast_ref::<String>()
-                .map(String::as_str)
-                .or_else(|| panic.downcast_ref::<&str>().copied())
-                .unwrap_or("the backend panicked");
-            bail!("{}", message.trim())
+/// OpenVM and SP1 mark the bottom alone, their zkVM fixing the top. ZisK marks both, and renamed the
+/// pair in v1.1.0-alpha, so a guest linking a script of its own carries the older one.
+fn heap_symbols(zkvm: zkVMKind) -> &'static [&'static [&'static str]] {
+    match zkvm {
+        zkVMKind::OpenVM | zkVMKind::SP1 => &[&["_end"]],
+        zkVMKind::Zisk => &[&["_heap_bottom", "_heap_top"], ZISK_LEGACY_HEAP],
+    }
+}
+
+/// Names the registry to pull from, takes away what would make ere build instead, and names the
+/// symbols delimiting a heap that ere does not read by default.
+///
+/// ere reads all four out of the environment and passes the last two into the container. The
+/// environment is process wide, which one guest per run is what makes safe.
+///
+/// A guest marking the bottom of its heap with no symbol ere looks for is an error rather than a heap
+/// of nothing, since a guest quietly absent from the heap chart reads as one that allocates nothing
+/// at all.
+fn prepare(zkvm: zkVMKind, elf: &[u8]) -> Result<()> {
+    let sets = heap_symbols(zkvm);
+    let carried = sets
+        .iter()
+        .find(|set| {
+            set.iter()
+                .all(|symbol| symbol_address(elf, symbol).is_some())
+        })
+        .with_context(|| {
+            let sets: Vec<String> = sets.iter().map(|set| set.join(" and ")).collect();
+            format!(
+                "the guest ELF delimits its heap with neither {}",
+                sets.join(" nor ")
+            )
+        })?;
+
+    // SAFETY: reached once, from the one call that builds a profiler, before any block runs. The
+    // runtime that reached it holds worker threads, and they sit between the download that precedes
+    // this and the container that follows it, reading no environment of their own.
+    unsafe {
+        if env::var_os(ERE_IMAGE_REGISTRY).is_none_or(|registry| registry.is_empty()) {
+            env::set_var(ERE_IMAGE_REGISTRY, PUBLISHED_REGISTRY);
+        }
+        // ere reads this one for its presence rather than its value, and builds every image from an
+        // ere checkout wherever it is set, however the pull went.
+        env::remove_var(ERE_FORCE_REBUILD_DOCKER_IMAGE);
+        if *carried == ZISK_LEGACY_HEAP {
+            env::set_var(ERE_COST_ESTIMATION_HEAP_START, ZISK_LEGACY_HEAP[0]);
+            env::set_var(ERE_COST_ESTIMATION_HEAP_END, ZISK_LEGACY_HEAP[1]);
         }
     }
+    Ok(())
 }
 
-pub fn profiler(zkvm: zkVMKind, elf: &[u8]) -> Result<Box<dyn Profiler>> {
-    match zkvm {
-        zkVMKind::OpenVM => Ok(Box::new(openvm::OpenVMProfiler::new(elf)?)),
-        zkVMKind::SP1 => Ok(Box::new(sp1::SP1Profiler::new(elf)?)),
-        zkVMKind::Zisk => Ok(Box::new(zisk::ZiskProfiler::new(elf)?)),
-    }
+/// Stops where a container of this zkVM is already running, which is another guest being profiled.
+///
+/// ere names a container after its zkVM and takes that name from whatever holds it, so the run that
+/// arrives second would otherwise silently price its blocks against the guest the first is measuring.
+/// A container a dead run left behind is not running and is ere's to remove, so only a live one stops
+/// anything.
+fn standing(zkvm: zkVMKind) -> Result<()> {
+    let name = format!("ere-server-{zkvm}");
+    let output = Command::new("docker")
+        .args([
+            "container",
+            "inspect",
+            "--format",
+            "{{.State.Running}}",
+            &name,
+        ])
+        .output()
+        .context("failed to run docker, which is what prices a guest here")?;
+    ensure!(
+        output.stdout.trim_ascii() != b"true",
+        "the container {name} is running, holding another guest. Run `docker rm -f {name}`."
+    );
+    Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::{catching_panic, peak_heap_bytes};
-
-    /// One input that aborts the emulator must not discard the corpus around it.
-    #[test]
-    fn a_panicking_backend_becomes_an_error() {
-        let error = catching_panic(|| panic!("the guest hit an unaligned operand")).unwrap_err();
-        assert!(error.to_string().contains("unaligned operand"));
-    }
-
-    /// A heap handed out from the bottom up and the same heap handed out from the top down read
-    /// alike, which is what lets one reading serve allocators that grow in either direction.
-    #[test]
-    fn the_span_between_the_outermost_bytes_is_the_peak() {
-        let mut upward = [0u8; 64];
-        upward[..10].copy_from_slice(&[1; 10]);
-        assert_eq!(peak_heap_bytes(&upward), Some(10));
-
-        let mut downward = [0u8; 64];
-        downward[54..].copy_from_slice(&[1; 10]);
-        assert_eq!(peak_heap_bytes(&downward), Some(10));
-    }
-
-    /// Zeros a guest wrote read as untouched, so the span is what the outermost non-zero bytes
-    /// enclose rather than the count of them.
-    #[test]
-    fn the_span_covers_the_zeros_between_the_outermost_bytes() {
-        let mut heap = [0u8; 64];
-        (heap[0], heap[41]) = (1, 1);
-        assert_eq!(peak_heap_bytes(&heap), Some(42));
-    }
-
-    #[test]
-    fn an_untouched_heap_is_no_reading_rather_than_an_empty_one() {
-        assert_eq!(peak_heap_bytes(&[0; 64]), None);
-        assert_eq!(peak_heap_bytes(&[]), None);
-    }
+/// Pulls `image`, so that ere finds it in place rather than building one.
+///
+/// ere downgrades a failed pull to a build from an ere checkout, which is hours of SDK compilation
+/// rather than the published image a profile is supposed to be measured on.
+fn pull(image: &str) -> Result<()> {
+    let status = Command::new("docker")
+        .args(["pull", "--quiet", image])
+        .status()
+        .context("failed to run docker, which is what prices a guest here")?;
+    ensure!(status.success(), "failed to pull {image}");
+    Ok(())
 }

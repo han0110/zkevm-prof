@@ -6,19 +6,15 @@
 
 use std::{
     collections::BTreeMap,
-    fs::File,
-    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, ensure};
+use anyhow::{Result, ensure};
 use clap::Parser;
 use serde::{Deserialize, Serialize, de::IgnoredAny};
-use walkdir::WalkDir;
-use zkvm_prof::{Component, zkVMKind};
 
 use crate::{
-    command::read,
+    command::{json_files, read, write},
     profile::Meta,
     proving::{Proving, ProvingMeta},
 };
@@ -51,23 +47,15 @@ struct Published {
     document: Proving,
 }
 
-/// One run as a listing reads it.
+/// One run as a listing reads it, which is the profile's own meta and the datasets published under
+/// it.
 ///
-/// Every field is the profile's own, the publish path being composed of three of them, so the page
-/// fetches by what it already holds rather than by a field carrying the path again. The workflow run
-/// behind a profile is left to the profile, no listing being drawn from it.
+/// The publish path is composed of three of the meta's fields, so the page fetches by what it
+/// already holds rather than by a field carrying the path again.
 #[derive(Serialize)]
 struct Run<'a> {
-    version: &'a str,
-    zkvm: &'a zkVMKind,
-    zkvm_version: &'a str,
-    stateless_validator: &'a str,
-    stateless_validator_version: &'a str,
-    elf_url: Option<&'a str>,
-    elf_sha256: Option<&'a str>,
-    suite: &'a str,
-    generated_at: u64,
-    composition: &'a [Component],
+    #[serde(flatten)]
+    meta: &'a Meta,
     /// Proving time datasets published under the profile, empty where none were added.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     proving: Vec<Dataset<'a>>,
@@ -79,24 +67,6 @@ struct Run<'a> {
 struct Dataset<'a> {
     file: &'a str,
     meta: &'a ProvingMeta,
-}
-
-impl<'a> Run<'a> {
-    fn new(meta: &'a Meta, proving: Vec<Dataset<'a>>) -> Self {
-        Self {
-            version: &meta.version,
-            zkvm: &meta.zkvm,
-            zkvm_version: &meta.zkvm_version,
-            stateless_validator: &meta.stateless_validator,
-            stateless_validator_version: &meta.stateless_validator_version,
-            elf_url: meta.elf_url.as_deref(),
-            elf_sha256: meta.elf_sha256.as_deref(),
-            suite: &meta.suite,
-            generated_at: meta.generated_at,
-            composition: &meta.composition,
-            proving,
-        }
-    }
 }
 
 #[derive(Serialize)]
@@ -112,7 +82,11 @@ impl IndexCmd {
             .map(|path| {
                 Ok(Published {
                     profile: proved_over(path).expect("the path was walked as a dataset"),
-                    file: stem(path),
+                    file: path
+                        .file_stem()
+                        .expect("the path was walked as a file")
+                        .to_string_lossy()
+                        .into_owned(),
                     document: read(path)?,
                 })
             })
@@ -162,20 +136,15 @@ impl IndexCmd {
                             meta: &dataset.document.meta,
                         })
                         .collect();
-                    Run::new(&document.meta, proving)
+                    Run {
+                        meta: &document.meta,
+                        proving,
+                    }
                 })
                 .collect(),
         };
         let path = self.dir.join(INDEX);
-        let file =
-            File::create(&path).with_context(|| format!("failed to create {}", path.display()))?;
-        // Flushed by hand, since a buffer flushed on drop reports a short write nowhere and the
-        // index would be truncated under an exit code of zero.
-        let mut writer = BufWriter::new(file);
-        serde_json::to_writer_pretty(&mut writer, &index)?;
-        writer
-            .flush()
-            .with_context(|| format!("failed to write {}", path.display()))?;
+        write(&path, &index)?;
         eprintln!("indexed {} runs into {}", index.runs.len(), path.display());
         Ok(())
     }
@@ -190,22 +159,9 @@ fn published(dir: &Path) -> Result<(Vec<PathBuf>, Vec<PathBuf>)> {
     // The index itself is the one path excluded, rather than the name it carries, so a corpus called
     // index keeps its profile listed.
     let index = dir.join(INDEX);
-    let paths = WalkDir::new(dir)
-        .sort_by_file_name()
+    Ok(json_files(dir, None)?
         .into_iter()
-        .filter_map(|entry| match entry {
-            Err(error) => Some(Err(anyhow!("failed to walk {}: {error}", dir.display()))),
-            Ok(entry) => {
-                let path = entry.into_path();
-                let json = path
-                    .extension()
-                    .is_some_and(|extension| extension == "json");
-                (json && path != index).then_some(Ok(path))
-            }
-        })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(paths
-        .into_iter()
+        .filter(|path| *path != index)
         .partition(|path| proved_over(path).is_none()))
 }
 
@@ -226,14 +182,6 @@ fn proved_over(path: &Path) -> Option<PathBuf> {
     profile.is_file().then_some(profile)
 }
 
-/// A file's name without its extension, which is what the page fetches a dataset by.
-fn stem(path: &Path) -> String {
-    path.file_stem()
-        .expect("the path was walked as a file")
-        .to_string_lossy()
-        .into_owned()
-}
-
 /// A run's identifier, which is where it sits under the directory the page fetches from.
 fn identifier(dir: &Path, path: &Path) -> String {
     path.strip_prefix(dir)
@@ -245,18 +193,14 @@ fn identifier(dir: &Path, path: &Path) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{env, fs};
+    use std::{fs, path::PathBuf};
 
-    use crate::command::index::proved_over;
+    use crate::command::{directory, index::proved_over};
 
     /// A layout to walk, since what tells a dataset from a profile is whether the directory it sits
     /// in names a profile beside it, which is a question about files rather than about names.
-    fn tree(name: &str) -> std::path::PathBuf {
-        let root = env::temp_dir().join(name);
-        // Removed first as well as last, so a run left short by a failing assertion still starts
-        // from an empty tree.
-        let _ = fs::remove_dir_all(&root);
-        let elf = root.join("reth/0e5355489a37a840");
+    fn tree(name: &str) -> PathBuf {
+        let elf = directory(name).join("reth/0e5355489a37a840");
         fs::create_dir_all(elf.join("eest-v0.6.2-100m")).unwrap();
         fs::create_dir_all(elf.join("proving")).unwrap();
         fs::write(elf.join("eest-v0.6.2-100m.json"), "{}").unwrap();

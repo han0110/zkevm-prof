@@ -2,6 +2,40 @@
   "runs": [
     {
       "version": "0.2.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "zesu",
+      "stateless_validator_version": "glamsterdam-devnet-7.2-2026-07-29",
+      "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-zesu-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "375301d200628484ff3b677f45f10d61b36c4311e305aa9c86ca80c2d0c64900",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1788186888,
+      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449398",
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
       "zkvm": "openvm",
       "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "reth",
@@ -75,40 +109,6 @@
         {
           "name": "system",
           "note": "Memory and tables"
-        }
-      ]
-    },
-    {
-      "version": "0.1.0",
-      "zkvm": "zisk",
-      "zkvm_version": "v1.1.0-alpha",
-      "stateless_validator": "zesu",
-      "stateless_validator_version": "glamsterdam-devnet-7.2-2026-07-29",
-      "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-zesu-zisk-v1.1.0-alpha.elf",
-      "elf_sha256": "375301d200628484ff3b677f45f10d61b36c4311e305aa9c86ca80c2d0c64900",
-      "suite": "mainnet-25580000-1000",
-      "generated_at": 1787587203,
-      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32736019830",
-      "composition": [
-        {
-          "name": "base",
-          "note": "ROM and tables"
-        },
-        {
-          "name": "precompile",
-          "note": "Precompiles"
-        },
-        {
-          "name": "memory",
-          "note": "Memory"
-        },
-        {
-          "name": "opcode",
-          "note": "ZisK instructions"
-        },
-        {
-          "name": "main",
-          "note": "Main"
         }
       ]
     },

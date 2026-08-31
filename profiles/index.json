@@ -4,6 +4,32 @@
       "version": "0.2.0",
       "zkvm": "openvm",
       "zkvm_version": "v2.1.0-preview",
+      "stateless_validator": "reth",
+      "stateless_validator_version": "f804dc1",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",
+      "elf_sha256": "27ee7fc649c71faea13e36ab196e949495c9025ad45fcd4c1e6643c67bbc0a4b",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1788185266,
+      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449899",
+      "composition": [
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "rv64",
+          "note": "RISC-V instructions"
+        },
+        {
+          "name": "system",
+          "note": "Memory and tables"
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
+      "zkvm": "openvm",
+      "zkvm_version": "v2.1.0-preview",
       "stateless_validator": "ethrex",
       "stateless_validator_version": "v23.0.0",
       "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-openvm-v2.1.0-preview.elf",
@@ -505,28 +531,6 @@
               ]
             }
           }
-        }
-      ]
-    },
-    {
-      "version": "0.1.0",
-      "zkvm": "openvm",
-      "zkvm_version": "v2.1.0-preview",
-      "stateless_validator": "reth",
-      "stateless_validator_version": "f804dc1",
-      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-reth-openvm-v2.1.0-preview.elf",
-      "elf_sha256": "27ee7fc649c71faea13e36ab196e949495c9025ad45fcd4c1e6643c67bbc0a4b",
-      "suite": "mainnet-25580000-1000",
-      "generated_at": 1787309613,
-      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32470579644",
-      "composition": [
-        {
-          "name": "precompile",
-          "note": "Precompiles"
-        },
-        {
-          "name": "rv64",
-          "note": "RISC-V instructions"
         }
       ]
     },

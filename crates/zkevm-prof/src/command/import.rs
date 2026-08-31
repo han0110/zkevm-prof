@@ -6,19 +6,16 @@
 
 use std::{
     collections::{BTreeMap, HashMap},
-    fs::{self, File},
-    io::{BufWriter, Write},
     path::{Path, PathBuf},
 };
 
-use anyhow::{Context, Result, anyhow, bail, ensure};
+use anyhow::{Result, bail, ensure};
 use clap::{Parser, builder::PossibleValuesParser};
 use serde::Deserialize;
-use walkdir::WalkDir;
 use zkvm_prof::zkVMKind;
 
 use crate::{
-    command::read,
+    command::{json_files, read, write},
     profile::{Entry, Profile},
     proving::{Hardware, Proving, ProvingMeta},
 };
@@ -39,45 +36,26 @@ const PROFILE_DEPTH: usize = 3;
 /// Root a corpus names its EEST fixtures under, which a provoor test name drops.
 const FIXTURE_ROOT: &str = "tests/";
 
-/// A machine times can be imported for.
+/// Machines times can be imported for, keyed by what `--id` names one by, which is also the file a
+/// dataset is written to.
 ///
 /// The machine is stated here rather than read off the run, since a run records the host that wrote
-/// it while a dataset is proved across the whole set.
-struct Machine {
-    /// What `--id` names the machine by, which is also the file a dataset is written to.
-    id: &'static str,
-    name: &'static str,
-    machines: u32,
-    cpu: &'static str,
-    ram_bytes: u64,
-    os: &'static str,
-    /// Cards one host holds, empty on a machine that proves on its CPU alone.
-    gpus: &'static [&'static str],
-}
-
-const MACHINES: &[Machine] = &[Machine {
-    id: "ef-cluster-4x4",
-    name: "EF Cluster (4x4)",
-    machines: 4,
-    cpu: "AMD Ryzen Threadripper PRO 9975WX 32-Cores",
-    ram_bytes: 125 * 1024 * 1024 * 1024,
-    os: "ubuntu 24.04",
-    gpus: &["NVIDIA GeForce RTX 5090"; 4],
-}];
-
-impl Machine {
-    fn meta(&self) -> ProvingMeta {
+/// it while a dataset is proved across the whole set. A machine that proves on its CPU alone holds
+/// no card.
+fn machines() -> BTreeMap<&'static str, ProvingMeta> {
+    BTreeMap::from([(
+        "ef-cluster-4x4",
         ProvingMeta {
-            name: self.name.to_owned(),
-            machines: self.machines,
+            name: "EF Cluster (4x4)".to_owned(),
+            machines: 4,
             hardware: Hardware {
-                cpu: self.cpu.to_owned(),
-                ram_bytes: self.ram_bytes,
-                os: self.os.to_owned(),
-                gpus: self.gpus.iter().map(|gpu| (*gpu).to_owned()).collect(),
+                cpu: "AMD Ryzen Threadripper PRO 9975WX 32-Cores".to_owned(),
+                ram_bytes: 125 * 1024 * 1024 * 1024,
+                os: "ubuntu 24.04".to_owned(),
+                gpus: vec!["NVIDIA GeForce RTX 5090".to_owned(); 4],
             },
-        }
-    }
+        },
+    )])
 }
 
 /// Files the proving times of one run under the profile they are read against.
@@ -105,10 +83,7 @@ pub struct ImportCmd {
     profile_dir: PathBuf,
 
     /// Machine the times were measured on, which is what the page states beside them.
-    #[arg(
-        long,
-        value_parser = PossibleValuesParser::new(MACHINES.iter().map(|machine| machine.id))
-    )]
+    #[arg(long, value_parser = PossibleValuesParser::new(machines().into_keys()))]
     id: String,
 }
 
@@ -173,23 +148,23 @@ struct Profiled<'a> {
     by_name: &'a BTreeMap<String, Entry>,
     /// The block numbers, which is what a chain harness records in place of a name. A corpus whose
     /// blocks share a number contributes none, an EEST fixture always being block one.
-    by_number: HashMap<u64, &'a str>,
+    by_number: HashMap<u64, (&'a str, &'a Entry)>,
 }
 
 impl<'a> Profiled<'a> {
     fn new(entries: &'a BTreeMap<String, Entry>) -> Self {
-        let mut numbered: HashMap<u64, Option<&str>> = HashMap::new();
+        let mut numbered: HashMap<u64, Option<(&str, &Entry)>> = HashMap::new();
         for (name, entry) in entries {
             numbered
                 .entry(entry.metadata.block_number)
                 .and_modify(|held| *held = None)
-                .or_insert(Some(name));
+                .or_insert(Some((name, entry)));
         }
         Self {
             by_name: entries,
             by_number: numbered
                 .into_iter()
-                .filter_map(|(number, name)| Some((number, name?)))
+                .filter_map(|(number, found)| Some((number, found?)))
                 .collect(),
         }
     }
@@ -200,27 +175,21 @@ impl<'a> Profiled<'a> {
     /// under is put back, while a chain harness names a block by its number, which is why a corpus
     /// of one block per number is read by number too.
     fn find(&self, name: &str, number: u64) -> Option<(&'a str, &'a Entry)> {
-        let entries = self.by_name;
         let named = |name: &str| {
-            entries
+            self.by_name
                 .get_key_value(name)
                 .map(|(name, entry)| (name.as_str(), entry))
         };
         named(name)
             .or_else(|| named(&format!("{FIXTURE_ROOT}{name}")))
-            .or_else(|| {
-                self.by_number
-                    .get(&number)
-                    .map(|name| (*name, &entries[*name]))
-            })
+            .or_else(|| self.by_number.get(&number).copied())
     }
 }
 
 impl ImportCmd {
     pub fn run(self) -> Result<()> {
-        let machine = MACHINES
-            .iter()
-            .find(|machine| machine.id == self.id)
+        let meta = machines()
+            .remove(self.id.as_str())
             .expect("clap parsed the id from the machines above");
         let path = profile(&self.profile_dir, &self.elf_sha256, &self.suite)?;
         let profile: Profile = read(&path)?;
@@ -278,10 +247,10 @@ impl ImportCmd {
             .parent()
             .expect("the profile sits under the guest and the ELF")
             .join(&self.suite)
-            .join(format!("{}.json", machine.id));
+            .join(format!("{}.json", self.id));
         let document = Proving {
             proving_time_ms,
-            meta: machine.meta(),
+            meta,
         };
         write(&output, &document)?;
         eprintln!(
@@ -301,16 +270,8 @@ impl ImportCmd {
 /// filed under, so the hash a run states carries it whole and the directory matches a prefix of it.
 fn profile(dir: &Path, elf_sha256: &str, suite: &str) -> Result<PathBuf> {
     let named = format!("{suite}.json");
-    let paths = WalkDir::new(dir)
-        .min_depth(PROFILE_DEPTH)
-        .max_depth(PROFILE_DEPTH)
-        .sort_by_file_name()
+    let found: Vec<PathBuf> = json_files(dir, Some(PROFILE_DEPTH))?
         .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| anyhow!("failed to walk {}: {error}", dir.display()))?;
-    let found: Vec<PathBuf> = paths
-        .into_iter()
-        .map(walkdir::DirEntry::into_path)
         .filter(|path| {
             path.ends_with(&named)
                 && path
@@ -359,20 +320,7 @@ fn provoor(dir: &Path) -> Result<Vec<Proved>> {
 /// build differently.
 fn zkevm_metrics(dir: &Path, zkvm: zkVMKind) -> Result<Vec<Proved>> {
     let proved_on = format!("{zkvm}-");
-    let paths = WalkDir::new(dir)
-        .min_depth(METRIC_DEPTH)
-        .max_depth(METRIC_DEPTH)
-        .sort_by_file_name()
-        .into_iter()
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|error| anyhow!("failed to walk {}: {error}", dir.display()))?
-        .into_iter()
-        .map(walkdir::DirEntry::into_path)
-        .filter(|path| {
-            path.extension()
-                .is_some_and(|extension| extension == "json")
-        })
-        .collect::<Vec<_>>();
+    let paths = json_files(dir, Some(METRIC_DEPTH))?;
     for path in &paths {
         let sdk = path
             .parent()
@@ -387,13 +335,9 @@ fn zkevm_metrics(dir: &Path, zkvm: zkVMKind) -> Result<Vec<Proved>> {
     }
     paths
         .into_iter()
-        .filter_map(|path| {
-            let metric: Metric = match read(&path) {
-                Ok(metric) => metric,
-                Err(error) => return Some(Err(error)),
-            };
-            let success = metric.proving.success?;
-            Some(Ok(Proved {
+        .map(|path| {
+            let metric: Metric = read(&path)?;
+            Ok(metric.proving.success.map(|success| Proved {
                 name: metric.metadata.original_test_name,
                 block_number: metric.metadata.block_number,
                 gas_used: metric.metadata.block_used_gas,
@@ -401,46 +345,23 @@ fn zkevm_metrics(dir: &Path, zkvm: zkVMKind) -> Result<Vec<Proved>> {
                 output_matched: success.output_matched,
             }))
         })
+        .filter_map(Result::transpose)
         .collect()
-}
-
-/// Writes a dataset, creating the directory naming the profile it states the times of.
-fn write(path: &Path, document: &Proving) -> Result<()> {
-    let parent = path.parent().expect("the path names a file in a directory");
-    fs::create_dir_all(parent).with_context(|| format!("failed to create {}", parent.display()))?;
-    let file =
-        File::create(path).with_context(|| format!("failed to create {}", path.display()))?;
-    // Flushed by hand, since a buffer flushed on drop reports a short write nowhere and the dataset
-    // would be truncated under an exit code of zero.
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer_pretty(&mut writer, document)?;
-    writer
-        .flush()
-        .with_context(|| format!("failed to write {}", path.display()))?;
-    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, env, fs, path::PathBuf};
+    use std::{collections::BTreeMap, fs, path::PathBuf};
 
     use zkvm_prof::zkVMKind;
 
     use crate::{
-        command::import::{Profiled, profile, zkevm_metrics},
+        command::{
+            directory,
+            import::{Profiled, profile, zkevm_metrics},
+        },
         profile::Entry,
     };
-
-    /// A directory to build a tree in, since what a run and a profile offer each other is read off
-    /// the files sitting there rather than worked out from the names.
-    fn directory(name: &str) -> PathBuf {
-        let root = env::temp_dir().join(name);
-        // Removed first as well as last, so a run left short by a failing assertion still starts
-        // from an empty tree.
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
-    }
 
     /// A tree of published profiles to search, since what tells one profile from another is the ELF
     /// directory it sits under rather than anything in its name.

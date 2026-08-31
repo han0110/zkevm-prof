@@ -11,13 +11,10 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # OpenVM arrives as a git dependency whose submodule tree carries the whole of openssl. libgit2
-  # fails partway through a clone that size, so fetching goes through the git CLI instead.
+  # ere's catalog resolves ere's own workspace to name a zkVM SDK version, and that workspace carries
+  # OpenVM, whose submodule tree holds the whole of openssl. libgit2 fails partway through a clone
+  # that size, so fetching goes through the git CLI instead.
   CARGO_NET_GIT_FETCH_WITH_CLI: true
-  # OpenVM's rvr backend translates a guest to C and builds it, so it picks the LLVM toolchain the
-  # install step below puts on PATH rather than the distribution clang.
-  RVR_CC: clang-22
-  RVR_LD: lld
 
 jobs:
   unit-test:
@@ -31,16 +28,6 @@ jobs:
         run: |
           shellcheck .github/scripts/*.sh
           python3 .github/scripts/report.py --help > /dev/null
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq --no-install-recommends \
-            build-essential clang libclang-dev libgmp-dev libomp-dev libopenmpi-dev \
-            libsodium-dev nasm nlohmann-json3-dev openmpi-bin protobuf-compiler uuid-dev
-
-      - name: Install the LLVM toolchain
-        run: bash .github/scripts/install-llvm.sh
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -56,8 +43,9 @@ jobs:
       - run: cargo fmt --all --check
 
       # A branch restores the cache main last wrote, so a revision newer than that is cloned cold,
-      # and the OpenVM submodule tree is large enough that one network fault fails the job. Fetching
-      # is retried apart from the compile, which needs no network of its own.
+      # and the OpenVM submodule tree is large enough that one network fault fails the job. The
+      # compile clones it too, ere's catalog resolving ere's workspace from its own build script, so
+      # both are retried.
       - name: Fetch dependencies
         run: |
           for attempt in 1 2 3; do
@@ -66,6 +54,12 @@ jobs:
           done
           exit 1
 
-      - run: cargo clippy --release --all-targets --locked -- -D warnings
+      - name: Lint
+        run: |
+          for attempt in 1 2 3; do
+            if cargo clippy --release --all-targets --locked -- -D warnings; then exit 0; fi
+            sleep 15
+          done
+          exit 1
 
       - run: cargo test --release --locked

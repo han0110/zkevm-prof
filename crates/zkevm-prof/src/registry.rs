@@ -131,7 +131,7 @@ pub async fn elf(zkvm: zkVMKind, stateless_validator: &str) -> Result<Vec<u8>> {
                 }
             };
             Ok(downloader
-                .download(elf.stateless_validator()?, zkvm)
+                .download(elf.stateless_validator()?, zkvm.as_str().parse().unwrap())
                 .await?
                 .elf)
         }

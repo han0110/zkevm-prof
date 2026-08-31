@@ -6,41 +6,48 @@ The library takes a guest ELF as bytes and an input as bytes. It knows nothing a
 computes or what it is handed, so it profiles any guest built for a zkVM it supports. Fetching an
 ELF, encoding an input and writing the results out are the caller's.
 
-## What each zkVM is priced with
+## What prices a guest
+
+An execution is priced by `ere-server`, which the pinned ere revision publishes one image of per
+zkVM. The library pulls that image, starts it against the guest ELF, and reads back what ere's own
+estimator charged. Nothing here links a zkVM SDK, so a zkVM is added by bumping the ere revision
+rather than by adding a backend.
 
 | zkVM | Cost | Peak heap |
 | --- | --- | --- |
-| OpenVM | Metered cost, which is the trace cells the app VM commits to | Read from guest memory |
-| SP1 | Gas without the division that rounds it, which keeps the weighted sum exact | Read on `x86_64` Linux only |
+| OpenVM | Trace cells, summed over the segments a metered run reports | Read from guest memory |
+| SP1 | Gas without the division that rounds it, which keeps the weighted sum exact | Read from the file behind guest memory |
 | ZisK | The weighted sum the emulator accumulates | Read from guest memory |
 
 SP1 keeps guest memory behind its executor except on the target that executor compiles a native JIT
-for. Elsewhere the cost is still priced and the peak heap comes back absent.
+for, so its heap is read out of the file that JIT runs the guest against. The image is `x86_64` Linux,
+so that reading is the same whatever host runs the container.
 
 ## Use
 
 ```rust
-use zkvm_prof::{profiler, zkVMKind};
+use zkvm_prof::{Profiler, zkVMKind};
 
 let elf = std::fs::read("guest.elf")?;
 let input = std::fs::read("input.bin")?;
 
-let profiler = profiler(zkVMKind::Zisk, &elf)?;
+let profiler = Profiler::new(zkVMKind::Zisk, &elf)?;
 let execution = profiler.profile(&input)?;
 println!("{}", execution.cost.values().sum::<u64>());
 println!("{:?}", execution.peak_heap_bytes);
 ```
 
-A profiler is built once per ELF, so whatever it derives from that ELF is paid for once and reused
-across every input. It is `Sync`, so one profiler serves many threads. A profiled execution holds
-the whole guest memory, so a machine with many cores and little memory has to cap its thread count.
+A profiler starts one container and hands it the guest, so whatever the zkVM derives from that ELF is
+paid for once and every input after the first is one call into a warm process. It is `Sync`, so one
+profiler serves many threads.
 
-Build one profiler per process. The OpenVM backend leaks the SDK it builds, so each OpenVM profiler
-a process constructs holds its memory until the process ends.
+Build one profiler per process, and profile one guest of a zkVM per host at a time. A container is
+named after its zkVM and binds one port, so a profiler that finds one of its zkVM already running
+stops rather than taking it over.
 
-`profile` is the whole of the interface. A guest that breaks a zkVM invariant aborts the emulator by
-panicking rather than by returning, and every backend catches that and reports it as the error it is,
-so one bad input costs a caller that input and nothing more.
+`profile` is the whole of the interface. A guest that breaks a zkVM invariant panics inside the
+container, which reports it as the error it is, so one bad input costs a caller that input and
+nothing more.
 
 ## Cost kinds
 
@@ -49,10 +56,11 @@ execution, so they sum to what the whole of it cost and no key holds that whole.
 names them in the order a chart stacks them, and each one carries the note a report prints under that
 chart.
 
-A backend prices an execution one way and splits it another, so it checks the two against each other
-before returning. The sum is therefore the zkVM's own figure rather than a second reading of it.
+ere names the keys and this crate names what each covers, so a run is checked against that list. A
+kind an ere revision adds stops a run rather than reaching a chart unlabelled.
 
 ## Build
 
-OpenVM execution goes through rvr, which needs LLVM clang 19 or newer and a matching lld. Ubuntu
-ships a clang older than rvr accepts and no lld at all, so both have to be installed first.
+The host needs the `docker` command and permission to run containers. `ERE_IMAGE_REGISTRY` names the
+registry the images are pulled from, and defaults to the one ere publishes to. No zkVM toolchain is
+needed, the images carrying their own.

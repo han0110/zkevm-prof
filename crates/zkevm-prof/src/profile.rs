@@ -26,7 +26,7 @@ pub struct Profile {
 #[derive(Deserialize, Serialize)]
 pub struct Meta {
     /// Harness that measured the run, which stands for everything a cost depends on that the rest of
-    /// this does not name, the zkVM SDK the crate links included.
+    /// this does not name, the ere revision the cost was estimated by included.
     pub version: String,
     pub zkvm: zkVMKind,
     /// zkVM SDK the guest was built against, as the ere catalog names it.
@@ -60,8 +60,8 @@ pub struct Meta {
 #[derive(Deserialize, Serialize)]
 pub struct Entry {
     pub cost: Cost,
-    /// Peak bytes of heap the guest reached, absent where the backend read no heap or the guest
-    /// left its heap untouched.
+    /// Peak bytes of heap the guest reached, absent where the zkVM read no heap or the guest left
+    /// its heap untouched.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub peak_heap_bytes: Option<u64>,
     pub metadata: Metadata,
@@ -71,7 +71,7 @@ pub struct Entry {
 /// short of its corpus says which blocks it is short of and why.
 #[derive(Deserialize, Serialize)]
 pub struct Failure {
-    /// What the backend reported, which is the guest's own error or the panic that aborted the
+    /// What the container reported, which is the guest's own error or the panic that aborted the
     /// emulator.
     pub reason: String,
     pub metadata: Metadata,

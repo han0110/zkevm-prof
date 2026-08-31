@@ -4,13 +4,20 @@ Measures what a zkVM charges to prove a stateless validator that executes a bloc
 zkVM's own price for the execution, not wall clock time. It therefore reproduces on any machine, and
 it compares guests that ran the same blocks.
 
-A backend prices the program it receives and reads the memory that program left behind. Every guest
-on one zkVM is therefore measured the same way, whatever it is written in.
+A guest is priced inside the `ere-server` container image that ere publishes for its zkVM. The
+container prices the program it receives and reads the memory that program left behind. Every guest
+on one zkVM is therefore measured the same way, whatever it is written in, and on any host, since the
+zkVM SDK is in the image rather than in this crate.
+
+The host needs the `docker` command and permission to run containers. It needs no zkVM toolchain.
 
 ```sh
 cargo build --release
 ./target/release/zkevm-prof --help
 ```
+
+The profiler pulls the image before it starts one, and fails if the pull fails. It never builds an
+image. `ERE_IMAGE_REGISTRY` names the registry to pull from and defaults to the one ere publishes to.
 
 ## profile
 
@@ -77,8 +84,8 @@ The profiler skips a run when the published file already records all of these.
 - The zkVM version.
 - The guest version.
 
-The profiler makes this check before it downloads the corpus and before it compiles the guest. A
-skipped rerun therefore costs the ELF download and nothing more. `--force` measures the run again.
+The profiler makes this check before it downloads the corpus and before it pulls the image. A skipped
+rerun therefore costs the ELF download and nothing more. `--force` measures the run again.
 
 ### Interrupted runs
 
@@ -97,6 +104,18 @@ Nothing reaches the published path until a whole run is ready, so a profile stay
 that replaces it finishes. A checkpoint is never published, because everything that reads a run reads
 `.json` files alone.
 
+### The image a run is priced by
+
+The crate pins one ere revision. That revision fixes both the estimator the cost comes from and the
+image tag it is pulled under, so a profile is priced by the code the pin names. Bumping the pin
+therefore changes the figures, which is why the harness version a profile records stands for the ere
+revision as well.
+
+The container is named after its zkVM and binds one port, so one guest of a zkVM is profiled per host
+at a time. A run that finds a container of its zkVM already running stops and names the command that
+removes it, rather than taking it over and leaving the first run to measure the guest that replaced
+its own.
+
 ### The profile file
 
 The profiler profiles the last block of each fixture. That is the block an EEST blockchain test
@@ -104,12 +123,17 @@ exercises, and the blocks before it only build the state it runs against. A fixt
 several tests gives one entry per test.
 
 Each entry carries the cost, keyed by the kinds that zkVM charges for. The kinds partition the
-execution, so the whole it cost is what they sum to and no key holds it. On a zkVM whose backend
-reads the heap, the entry also carries `peak_heap_bytes`. The profiler leaves that field out where it
-read no heap.
+execution, so the whole it cost is what they sum to and no key holds it. The entry also carries
+`peak_heap_bytes`. The profiler leaves that field out where it read no heap.
 
-A block the guest did not get through goes under `failures` with the reason the backend gave. A run
-that failed on nothing writes no `failures` key at all.
+A block the guest did not get through goes under `failures` with the reason the zkVM gave. A run that
+failed on nothing writes no `failures` key at all.
+
+A block the container went away under is a different thing, and goes nowhere. The container takes
+down every block running in it, which says nothing about any of them, so recording them as failures
+would carry them forward as blocks a later run never measures again. The run keeps them out of its
+checkpoint, stops without publishing, and says how many to measure again. Run the same command again
+and it profiles those blocks alone.
 
 The meta names the guest, the exact binary, the corpus and the kinds the cost splits into, so a
 reader needs nothing else.
@@ -118,7 +142,7 @@ reader needs nothing else.
 {
   "profile": {
     "witness-generator-spec-cli::block_25580000_24c8fa4d": {
-      "cost": { "precompile": 7154852252, "rv64": 10994655178 },
+      "cost": { "precompile": 7154852252, "rv64": 10994655178, "system": 3521406122 },
       "peak_heap_bytes": 57531938,
       "metadata": { "gas_used": 26211834, "block_number": 25580000 }
     }
@@ -130,7 +154,7 @@ reader needs nothing else.
     }
   },
   "meta": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "zkvm": "openvm",
     "zkvm_version": "v2.1.0-preview",
     "stateless_validator": "zesu",
@@ -142,7 +166,8 @@ reader needs nothing else.
     "run_url": null,
     "composition": [
       { "name": "precompile", "note": "Precompiles" },
-      { "name": "rv64", "note": "RISC-V instructions" }
+      { "name": "rv64", "note": "RISC-V instructions" },
+      { "name": "system", "note": "Memory and tables" }
     ]
   }
 }
@@ -150,16 +175,18 @@ reader needs nothing else.
 
 ### Parallel execution
 
-The profiler runs blocks in parallel over the rayon global pool, which fills every core. One profiled
-execution holds the whole guest memory. On a machine with many cores and little memory, cap the pool.
+The profiler runs blocks in parallel over the rayon global pool, which fills every core. One
+container serves the whole corpus, and it holds the whole guest memory of every block running in it
+at once. That is what a run is measured at, so two runs are read against each other.
 
-```sh
-RAYON_NUM_THREADS=8 zkevm-prof profile --zkvm openvm ...
-```
+Progress and failures go to stderr. The profiler reports each failed block, records it under
+`failures`, and prints how many blocks it got through. The command fails only when every block
+failed.
 
-Progress and failures go to stderr. The profiler drops whatever a backend prints while it runs. It
-reports each failed block, records it under `failures`, and prints how many blocks it got through.
-The command fails only when every block failed.
+Everything else is dropped. The container takes its streams from the profiler's, so the report the
+ZisK emulator prints for every block it keeps statistics for, and what the SP1 executor prints of the
+guest's own writes, go nowhere. A thousand blocks would otherwise carry tens of thousands of lines
+past the progress.
 
 ## Cost
 
@@ -171,14 +198,20 @@ The command fails only when every block failed.
 
 ### OpenVM
 
-The cost unit is trace cells. It splits into two kinds.
+The cost unit is trace cells, summed over the segments a metered run reports. It splits into three
+kinds.
 
 - `precompile` is the accelerator extensions.
 - `rv64` is the RISC-V instructions.
+- `system` is the memory chips and the lookup tables.
+
+A fixed height table is committed to once per segment, so segmentation is part of the price.
+`ERE_OPENVM_SEGMENT_MEMORY` sets the memory one segment covers and so how many segments a run takes.
 
 #### Source
 
-- [Metered cost mode](https://github.com/openvm-org/openvm/blob/v2.1.0-preview/crates/vm/src/arch/execution_mode/metered_cost.rs)
+- [Metered mode](https://github.com/openvm-org/openvm/tree/v2.1.0-preview/crates/vm/src/arch/execution_mode/metered)
+- [Which AIR each kind covers](https://github.com/eth-act/ere/blob/v0.17.0/crates/prover/openvm/src/cost.rs)
 
 ### SP1
 
@@ -194,6 +227,7 @@ into three kinds.
 - [Gas formula](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/vm/gas.rs)
 - [Trace cell table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_costs.json)
 - [Constraint table](https://github.com/succinctlabs/sp1/blob/v6.4.0/crates/core/executor/src/artifacts/rv64im_complexity.json)
+- [Which chip each kind covers](https://github.com/eth-act/ere/blob/v0.17.0/crates/prover/sp1/src/cost.rs)
 
 ### ZisK
 
@@ -210,6 +244,7 @@ The cost unit is trace cells. It splits into five kinds.
 - [Emulator execution statistics](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/emulator/src/stats/stats.rs)
 - [Base/Main/Memory weights](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/emulator/src/emu_costs.rs)
 - [Operation weights](https://github.com/0xPolygonHermez/zisk/blob/v1.1.0-alpha/core/src/zisk_ops_costs.rs)
+- [Which report row each kind reads](https://github.com/eth-act/ere/blob/v0.17.0/crates/prover/zisk/src/cost.rs)
 
 ## Peak heap
 
@@ -223,6 +258,10 @@ Each zkVM delimits the heap differently.
 - SP1 runs from `_end` to the input region above it.
 - ZisK runs from `_heap_bottom` to `_heap_top`.
 
+`ERE_COST_ESTIMATION_HEAP_START` and `ERE_COST_ESTIMATION_HEAP_END` name other symbols. The profiler
+sets them for a ZisK guest that links a script of its own and carries the pair ZisK used before
+v1.1.0-alpha.
+
 The input buffer falls inside the reading on OpenVM only, which reads the input into the guest's
 first allocation. SP1 and ZisK give the guest a pointer to a region outside the heap.
 
@@ -235,7 +274,7 @@ Memory that an allocator reserved but never touched is invisible. A guest that m
 pages it never writes therefore reads lower than its allocator claims.
 
 SP1 is read differently. Its heap spans 110 GiB of address space, which is too wide to slice. The
-backend therefore reads the memfd that the JIT runs the guest against. A page the guest never reached
-is a hole, and the file never materialises it. The reading is therefore page granular, where the
-others are byte exact. The JIT exists on x86_64 Linux only, so a build for any other target records
-no heap on SP1.
+estimator therefore reads the memfd that the JIT runs the guest against. A page the guest never
+reached is a hole, and the file never materialises it. The reading is therefore page granular, where
+the others are byte exact. The JIT exists on x86_64 Linux only, which the image is, so the reading is
+the same whatever host the container runs on.

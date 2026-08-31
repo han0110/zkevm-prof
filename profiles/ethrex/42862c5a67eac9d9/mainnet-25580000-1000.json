@@ -12002,7 +12002,7 @@
     }
   },
   "meta": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "zkvm": "sp1",
     "zkvm_version": "v6.4.0",
     "stateless_validator": "ethrex",
@@ -12010,8 +12010,8 @@
     "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-sp1-v6.4.0.elf",
     "elf_sha256": "42862c5a67eac9d9e7597e4b241e6f12643a3910bee5fccb85b455b9d6177b42",
     "suite": "mainnet-25580000-1000",
-    "generated_at": 1787318440,
-    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32470579651",
+    "generated_at": 1788194361,
+    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449433",
     "composition": [
       {
         "name": "syscall",

@@ -12,6 +12,7 @@ use std::{
     error::Error,
     fmt::{self, Display, Formatter},
     process::Command,
+    time::Duration,
 };
 
 use anyhow::{Context, Result, ensure};
@@ -169,7 +170,10 @@ impl Profiler {
             zkvm,
             Elf(elf.to_vec()),
             ProverResource::Cpu,
-            DockerizedzkVMConfig::default(),
+            DockerizedzkVMConfig {
+                health_timeout: Duration::from_mins(20),
+                ..Default::default()
+            },
         )
         .with_context(|| format!("failed to start {image}"))?;
 

@@ -130,14 +130,8 @@ pub async fn elf(zkvm: zkVMKind, stateless_validator: &str) -> Result<Vec<u8>> {
                     Downloader::from_commit(ERE_GUESTS_COMMIT, &github_token).await?
                 }
             };
-            // ere-guests names an earlier ere release than the one a cost is read from, so its
-            // `zkVMKind` is a second type of the same three zkVMs and is reached by name.
-            let named = zkvm
-                .as_str()
-                .parse()
-                .expect("both ere releases name the same three zkVMs");
             Ok(downloader
-                .download(elf.stateless_validator()?, named)
+                .download(elf.stateless_validator()?, zkvm.as_str().parse().unwrap())
                 .await?
                 .elf)
         }

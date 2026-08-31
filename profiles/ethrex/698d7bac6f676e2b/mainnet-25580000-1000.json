@@ -14002,7 +14002,7 @@
     }
   },
   "meta": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "zkvm": "zisk",
     "zkvm_version": "v1.1.0-alpha",
     "stateless_validator": "ethrex",
@@ -14010,8 +14010,8 @@
     "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-zisk-v1.1.0-alpha.elf",
     "elf_sha256": "698d7bac6f676e2b45e8995631c921b056d1ab67a4dc979dadc43acd20f6bd59",
     "suite": "mainnet-25580000-1000",
-    "generated_at": 1787312149,
-    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32470579721",
+    "generated_at": 1788190407,
+    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449398",
     "composition": [
       {
         "name": "base",

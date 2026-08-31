@@ -2,6 +2,60 @@
   "runs": [
     {
       "version": "0.2.0",
+      "zkvm": "zisk",
+      "zkvm_version": "v1.1.0-alpha",
+      "stateless_validator": "ethrex",
+      "stateless_validator_version": "v23.0.0",
+      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-zisk-v1.1.0-alpha.elf",
+      "elf_sha256": "698d7bac6f676e2b45e8995631c921b056d1ab67a4dc979dadc43acd20f6bd59",
+      "suite": "mainnet-25580000-1000",
+      "generated_at": 1788190407,
+      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449398",
+      "composition": [
+        {
+          "name": "base",
+          "note": "ROM and tables"
+        },
+        {
+          "name": "precompile",
+          "note": "Precompiles"
+        },
+        {
+          "name": "memory",
+          "note": "Memory"
+        },
+        {
+          "name": "opcode",
+          "note": "ZisK instructions"
+        },
+        {
+          "name": "main",
+          "note": "Main"
+        }
+      ],
+      "proving": [
+        {
+          "file": "ef-cluster-4x4",
+          "meta": {
+            "name": "EF Cluster (4x4)",
+            "machines": 4,
+            "hardware": {
+              "cpu": "AMD Ryzen Threadripper PRO 9975WX 32-Cores",
+              "ram_bytes": 134217728000,
+              "os": "ubuntu 24.04",
+              "gpus": [
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090",
+                "NVIDIA GeForce RTX 5090"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "version": "0.2.0",
       "zkvm": "sp1",
       "zkvm_version": "v6.4.0",
       "stateless_validator": "reth",
@@ -477,60 +531,6 @@
         {
           "name": "main",
           "note": "Main"
-        }
-      ]
-    },
-    {
-      "version": "0.1.0",
-      "zkvm": "zisk",
-      "zkvm_version": "v1.1.0-alpha",
-      "stateless_validator": "ethrex",
-      "stateless_validator_version": "v23.0.0",
-      "elf_url": "https://github.com/eth-act/ere-guests/releases/download/v0.16.0/stateless-validator-ethrex-zisk-v1.1.0-alpha.elf",
-      "elf_sha256": "698d7bac6f676e2b45e8995631c921b056d1ab67a4dc979dadc43acd20f6bd59",
-      "suite": "mainnet-25580000-1000",
-      "generated_at": 1787312149,
-      "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32470579721",
-      "composition": [
-        {
-          "name": "base",
-          "note": "ROM and tables"
-        },
-        {
-          "name": "precompile",
-          "note": "Precompiles"
-        },
-        {
-          "name": "memory",
-          "note": "Memory"
-        },
-        {
-          "name": "opcode",
-          "note": "ZisK instructions"
-        },
-        {
-          "name": "main",
-          "note": "Main"
-        }
-      ],
-      "proving": [
-        {
-          "file": "ef-cluster-4x4",
-          "meta": {
-            "name": "EF Cluster (4x4)",
-            "machines": 4,
-            "hardware": {
-              "cpu": "AMD Ryzen Threadripper PRO 9975WX 32-Cores",
-              "ram_bytes": 134217728000,
-              "os": "ubuntu 24.04",
-              "gpus": [
-                "NVIDIA GeForce RTX 5090",
-                "NVIDIA GeForce RTX 5090",
-                "NVIDIA GeForce RTX 5090",
-                "NVIDIA GeForce RTX 5090"
-              ]
-            }
-          }
         }
       ]
     },

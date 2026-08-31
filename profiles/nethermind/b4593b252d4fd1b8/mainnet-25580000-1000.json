@@ -14002,7 +14002,7 @@
     }
   },
   "meta": {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "zkvm": "zisk",
     "zkvm_version": "v1.1.0-alpha",
     "stateless_validator": "nethermind",
@@ -14010,8 +14010,8 @@
     "elf_url": "https://github.com/han0110/ere-guests/releases/download/v0.16.0/stateless-validator-nethermind-zisk-v1.1.0-alpha.elf",
     "elf_sha256": "b4593b252d4fd1b8d4b556e3239bb7d0a53c196a92a249da9d0a828d34576c74",
     "suite": "mainnet-25580000-1000",
-    "generated_at": 1787326032,
-    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/32470579721",
+    "generated_at": 1788200427,
+    "run_url": "https://github.com/han0110/zkevm-prof/actions/runs/33396449398",
     "composition": [
       {
         "name": "base",
